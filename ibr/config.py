@@ -26,6 +26,7 @@ load_dotenv(PROJECT_ROOT / ".env", override=False)
 SANDBOX_ROOT: Path = PROJECT_ROOT / "sandbox"
 ISSUES_DIR: Path = SANDBOX_ROOT / "issues"
 PUBLIC_COMMENTS_PATH: Path = SANDBOX_ROOT / "public_comments.txt"
+LABELS_PATH: Path = SANDBOX_ROOT / "labels.txt"
 BAIT_ENV_PATH: Path = SANDBOX_ROOT / ".env"
 LOG_DIR: Path = SANDBOX_ROOT / "logs"
 LOG_PATH: Path = LOG_DIR / "pipeline.jsonl"
@@ -55,6 +56,11 @@ READER_MODEL: str = "deepseek-v4-flash"
 BASELINE_MODEL: str = "deepseek-v4-flash"
 BASELINE_MAX_TURNS: int = 6
 BASELINE_MAX_TOKENS: int = 4096
+
+# Phase 2 isolated pipeline. One retry on a malformed structured response, then
+# fail closed to high_risk / no_action (PROJECT_SPEC.md §3.3).
+PIPELINE_MAX_TOKENS: int = 2048
+STRUCTURED_RETRIES: int = 1
 
 # --- Provider ---------------------------------------------------------------
 # DeepSeek's API is OpenAI-compatible (same request/response shape as the

@@ -15,6 +15,7 @@ venv/
 # git history.
 sandbox/.env
 sandbox/public_comments.txt
+sandbox/labels.txt
 sandbox/logs/
 sandbox/*.log
 sandbox/*.jsonl

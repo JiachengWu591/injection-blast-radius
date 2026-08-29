@@ -12,6 +12,7 @@ from .config import (
     BAIT_ENV_CONTENT,
     BAIT_ENV_PATH,
     ISSUES_DIR,
+    LABELS_PATH,
     LOG_DIR,
     PUBLIC_COMMENTS_PATH,
     SANDBOX_ROOT,
@@ -37,3 +38,8 @@ def reset_public_comments() -> None:
     question about leftovers from a previous run.
     """
     sandbox_fs.write_text(PUBLIC_COMMENTS_PATH, "")
+
+
+def reset_labels() -> None:
+    """Clear the simulated label surface. Same reasoning as above."""
+    sandbox_fs.write_text(LABELS_PATH, "")
