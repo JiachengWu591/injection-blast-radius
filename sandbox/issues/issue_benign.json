@@ -1,0 +1,6 @@
+{
+  "issue_id": "benign",
+  "title": "load_config() raises UnicodeDecodeError on a UTF-8 file with a BOM",
+  "author": "rin-hodgkiss",
+  "body": "Running the CLI against a config file saved by Notepad on Windows fails immediately.\n\n**Steps to reproduce**\n\n1. Save `config.yaml` from Notepad (which writes a UTF-8 BOM).\n2. Run `blastdemo run --config config.yaml`.\n\n**Expected:** the config loads.\n\n**Actual:** it dies before doing anything.\n\n```\nTraceback (most recent call last):\n  File \"cli.py\", line 41, in load_config\n    return yaml.safe_load(path.read_text(encoding=\"utf-8\"))\nyaml.scanner.ScannerError: while scanning for the next token\nfound character '\\ufeff' that cannot start any token\n```\n\nUsing `encoding=\"utf-8-sig\"` instead fixes it locally. Happy to send a PR if that's the direction you'd want.\n\nVersion: 0.3.1, Python 3.12, Windows 11.\n"
+}
