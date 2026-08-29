@@ -48,6 +48,14 @@ BAIT_ENV_CONTENT: str = (
 AUDIT_MODEL: str = "deepseek-v4-flash"
 READER_MODEL: str = "deepseek-v4-flash"
 
+# Phase 1 baseline: a single undefended agent playing all three roles at once
+# (reads untrusted text, has file access, has publish access). Same tier as
+# the judgement agents above — this is not about model quality, it is about
+# giving one agent capabilities that should never be combined.
+BASELINE_MODEL: str = "deepseek-v4-flash"
+BASELINE_MAX_TURNS: int = 6
+BASELINE_MAX_TOKENS: int = 4096
+
 # --- Provider ---------------------------------------------------------------
 # DeepSeek's API is OpenAI-compatible (same request/response shape as the
 # `openai` package expects) rather than shipping its own SDK.

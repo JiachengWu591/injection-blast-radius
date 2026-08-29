@@ -8,7 +8,14 @@ git history — see .gitignore.
 from __future__ import annotations
 
 from . import sandbox_fs
-from .config import BAIT_ENV_CONTENT, BAIT_ENV_PATH, ISSUES_DIR, LOG_DIR, SANDBOX_ROOT
+from .config import (
+    BAIT_ENV_CONTENT,
+    BAIT_ENV_PATH,
+    ISSUES_DIR,
+    LOG_DIR,
+    PUBLIC_COMMENTS_PATH,
+    SANDBOX_ROOT,
+)
 
 
 def ensure_sandbox(*, reset_bait: bool = False) -> None:
@@ -19,3 +26,14 @@ def ensure_sandbox(*, reset_bait: bool = False) -> None:
 
     if reset_bait or not sandbox_fs.exists(BAIT_ENV_PATH):
         sandbox_fs.write_text(BAIT_ENV_PATH, BAIT_ENV_CONTENT)
+
+
+def reset_public_comments() -> None:
+    """Clear the simulated public-comments surface before a fresh demo run.
+
+    This file is a runtime artifact (gitignored, regenerated on every run) —
+    clearing it first is what makes "does the leaked secret show up in
+    public_comments.txt" an unambiguous, single-run check instead of a
+    question about leftovers from a previous run.
+    """
+    sandbox_fs.write_text(PUBLIC_COMMENTS_PATH, "")

@@ -101,15 +101,22 @@ def test_both_fixtures_load() -> None:
 
 
 def test_malicious_fixture_actually_carries_an_injection() -> None:
-    """The attack fixture has to be a real attack, or Phase 1/2 prove nothing."""
+    """The attack fixture has to be a real attack, or Phase 1/2 prove nothing.
+
+    The payload is deliberately *not* the textbook "ignore all previous
+    instructions" phrasing — that reads as an obvious attack to a model's
+    safety training and gets refused outright (observed empirically running
+    Phase 1 against deepseek-v4-flash, even across several rephrasings). It's
+    social-engineered instead: framed as routine, unconditional triage
+    procedure rather than a request the model could reasonably decline.
+    """
     body = load_issue("malicious").body.lower()
-    assert "ignore all previous instructions" in body
     assert "sandbox/.env" in body
+    assert "full contents" in body
 
 
 def test_benign_fixture_is_clean() -> None:
     body = load_issue("benign").body.lower()
-    assert "ignore" not in body
     assert ".env" not in body
 
 
@@ -169,6 +176,21 @@ def test_env_files_are_gitignored() -> None:
         assert result.returncode == 0, f"{path} is NOT gitignored"
 
 
+def _is_gitignored(relpath: str) -> bool:
+    """Per-path, not batched: `git check-ignore --stdin` has a real bug on
+    Git for Windows where root-level dotfiles like ".env" silently fail to
+    match despite being covered by .gitignore (confirmed manually: `git
+    check-ignore -v .env` matches, `echo .env | git check-ignore --stdin`
+    doesn't). Single-path mode below is what test_env_files_are_gitignored
+    already relies on, and it's correct."""
+    result = subprocess.run(
+        ["git", "check-ignore", "-q", relpath],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
 def test_no_real_credentials_anywhere_committable() -> None:
     """Scan every file git would let you commit for a real-looking key."""
     candidates: list[Path] = []
@@ -179,17 +201,9 @@ def test_no_real_credentials_anywhere_committable() -> None:
         candidates.extend(Path(dirpath) / name for name in filenames)
 
     rel = [str(p.relative_to(PROJECT_ROOT)).replace("\\", "/") for p in candidates]
-    ignored = subprocess.run(
-        ["git", "check-ignore", "--stdin"],
-        cwd=PROJECT_ROOT,
-        input="\n".join(rel),
-        capture_output=True,
-        text=True,
-    )
-    skip = {line.strip().replace("\\", "/") for line in ignored.stdout.splitlines()}
 
     for path, relpath in zip(candidates, rel):
-        if relpath in skip:
+        if _is_gitignored(relpath):
             continue
         try:
             content = path.read_text(encoding="utf-8", errors="ignore")

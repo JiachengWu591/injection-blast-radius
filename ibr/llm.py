@@ -17,8 +17,10 @@ import openai
 from .config import DEEPSEEK_BASE_URL, API_KEY_ENV_VAR, assert_api_key_present
 
 # Short by design: a hung request must fail the run, not stall it. Fail-closed
-# applies to timeouts too (PROJECT_SPEC.md §1.4).
-DEFAULT_TIMEOUT_SECONDS = 30.0
+# applies to timeouts too (PROJECT_SPEC.md §1.4). 60s (not 30s) because
+# multi-turn tool-calling loops against the "pro" tier model occasionally run
+# past 30s per turn — observed timing out during Phase 1 experimentation.
+DEFAULT_TIMEOUT_SECONDS = 60.0
 DEFAULT_MAX_RETRIES = 2
 
 
