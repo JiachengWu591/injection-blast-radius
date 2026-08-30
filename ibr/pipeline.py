@@ -29,6 +29,14 @@ from .config import AUDIT_MODEL, PIPELINE_MAX_TOKENS, READER_MODEL
 from .executor import ExecutorDecision, execute
 from .issues import Issue
 from .llm import StructuredOutputFailure, build_client, call_structured_tool
+from .observability import (
+    LogRecord,
+    append_records,
+    new_run_id,
+    reasoning_precedes,
+    summarize,
+    utc_now,
+)
 from .schemas import (
     AUDIT_SCHEMA,
     AUDIT_TOOL_NAME,
@@ -70,11 +78,17 @@ class StageRecord:
     detail: str
     duration_ms: float
     raw_arguments: str | None = None
+    input_summary: str = ""
+    output_summary: str = ""
+    verdict_field: str | None = None
+    attempts: int | None = None
+    ts: str = field(default_factory=utc_now)
 
 
 @dataclass
 class PipelineResult:
     issue_id: str
+    run_id: str = field(default_factory=new_run_id)
     audit: AuditVerdict | None = None
     reader: ReaderOutput | None = None
     decision: ExecutorDecision | None = None
@@ -89,6 +103,42 @@ class PipelineResult:
     def flagged_for_review(self) -> bool:
         """suspicious passes through, but a human should see it later."""
         return self.audit is not None and self.audit.risk_level == "suspicious"
+
+
+def _emit_log(result: PipelineResult, architecture: str = "isolated") -> None:
+    """Serialise the run's stages to JSON Lines.
+
+    One write point for the whole run, rather than a logging call sprinkled
+    through every branch — the stage list is already the record of what
+    happened, so deriving the log from it keeps the two from drifting apart.
+    """
+    records = [
+        LogRecord(
+            ts=stage.ts,
+            run_id=result.run_id,
+            architecture=architecture,
+            issue_id=result.issue_id,
+            stage=stage.stage,
+            outcome=stage.outcome,
+            duration_ms=round(stage.duration_ms, 1),
+            input_summary=stage.input_summary,
+            output_summary=stage.output_summary,
+            detail=stage.detail,
+            risk_level=(
+                result.audit.risk_level
+                if stage.stage == "security_audit" and result.audit
+                else None
+            ),
+            reasoning_first=(
+                reasoning_precedes(stage.raw_arguments or "", stage.verdict_field)
+                if stage.verdict_field
+                else None
+            ),
+            attempts=stage.attempts,
+        )
+        for stage in result.stages
+    ]
+    append_records(records)
 
 
 def _issue_as_untrusted_input(issue: Issue) -> str:
@@ -153,20 +203,23 @@ def run_isolated(
     except (StructuredOutputFailure, SchemaViolation, openai.APIError) as exc:
         # PROJECT_SPEC.md §3.3: a failed audit is treated as high_risk, never
         # waved through because the check itself broke.
+        result.audit = AuditVerdict(
+            reasoning="(audit did not complete)",
+            risk_level="high_risk",
+            matched_patterns=("audit_failure",),
+        )
         result.stages.append(
             StageRecord(
                 stage="security_audit",
                 outcome="failed_closed",
                 detail=f"{type(exc).__name__}: {exc} — treating as high_risk",
                 duration_ms=(time.perf_counter() - started) * 1000,
+                input_summary=summarize(untrusted),
+                output_summary="(no valid output — failing closed to high_risk)",
             )
         )
-        result.audit = AuditVerdict(
-            reasoning="(audit did not complete)",
-            risk_level="high_risk",
-            matched_patterns=("audit_failure",),
-        )
         result.decision = execute(issue.issue_id, None)
+        _emit_log(result)
         return result
 
     result.audit = verdict
@@ -180,6 +233,13 @@ def run_isolated(
             ),
             duration_ms=(time.perf_counter() - started) * 1000,
             raw_arguments=call.raw_arguments,
+            input_summary=summarize(untrusted),
+            output_summary=summarize(
+                f"reasoning({len(verdict.reasoning)} chars) → "
+                f"risk_level={verdict.risk_level}"
+            ),
+            verdict_field="risk_level",
+            attempts=call.attempts,
         )
     )
 
@@ -192,9 +252,12 @@ def run_isolated(
                 outcome="no_action",
                 detail="high_risk — Reader and Executor were never invoked",
                 duration_ms=0.0,
+                input_summary="(audit verdict: high_risk)",
+                output_summary="pipeline halted; nothing downstream ran",
             )
         )
         result.decision = execute(issue.issue_id, None)
+        _emit_log(result)
         return result
 
     if simulate_audit_bypass:
@@ -233,9 +296,12 @@ def run_isolated(
                 outcome="failed_closed",
                 detail=f"{type(exc).__name__}: {exc} — treating as no_action",
                 duration_ms=(time.perf_counter() - started) * 1000,
+                input_summary=summarize(untrusted),
+                output_summary="(no valid output — failing closed to no_action)",
             )
         )
         result.decision = execute(issue.issue_id, None)
+        _emit_log(result)
         return result
 
     result.reader = reader_output
@@ -248,6 +314,14 @@ def run_isolated(
             ),
             duration_ms=(time.perf_counter() - started) * 1000,
             raw_arguments=call.raw_arguments,
+            input_summary=summarize(untrusted),
+            output_summary=summarize(
+                f"reasoning({len(reader_output.reasoning)} chars) → "
+                f"issue_type={reader_output.issue_type} "
+                f"suggested_action={reader_output.suggested_action}"
+            ),
+            verdict_field="suggested_action",
+            attempts=call.attempts,
         )
     )
 
@@ -264,6 +338,14 @@ def run_isolated(
                 f"{len(reader_output.summary)} chars) stay behind, logs only"
             ),
             duration_ms=0.0,
+            input_summary=summarize(
+                f"free text held back: reasoning={reader_output.reasoning!r} "
+                f"summary={reader_output.summary!r}"
+            ),
+            output_summary=(
+                f"issue_type={reader_output.issue_type} "
+                f"suggested_action={reader_output.suggested_action}"
+            ),
         )
     )
 
@@ -277,6 +359,11 @@ def run_isolated(
             outcome=decision.action_taken,
             detail=decision.note,
             duration_ms=(time.perf_counter() - started) * 1000,
+            input_summary=(
+                f"issue_type={reader_output.issue_type} "
+                f"suggested_action={reader_output.suggested_action}"
+            ),
+            output_summary=summarize(decision.published_comment or "(no comment)"),
         )
     )
     if decision.output_audit is not None:
@@ -286,7 +373,14 @@ def run_isolated(
                 outcome="blocked" if decision.output_audit.blocked else "clean",
                 detail=decision.output_audit.summary,
                 duration_ms=0.0,
+                input_summary=summarize(decision.published_comment or "(nothing)"),
+                output_summary=(
+                    "publication blocked"
+                    if decision.output_audit.blocked
+                    else "published"
+                ),
             )
         )
 
+    _emit_log(result)
     return result
