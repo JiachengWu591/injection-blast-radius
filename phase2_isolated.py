@@ -18,18 +18,19 @@ import openai
 
 from ibr import sandbox_fs
 from ibr.bootstrap import ensure_sandbox, reset_labels, reset_public_comments
-from ibr.config import BAIT_ENV_CONTENT, LABELS_PATH, PUBLIC_COMMENTS_PATH
+from ibr.config import (
+    BAIT_ENV_CONTENT,
+    BAIT_SECRET_VALUE,
+    LABELS_PATH,
+    PUBLIC_COMMENTS_PATH,
+)
 from ibr.executor import execute
 from ibr.issues import load_issue
 from ibr.pipeline import PipelineResult, run_isolated
 from ibr.schemas import ReaderOutput
 
 RULE = "─" * 72
-LEAK_MARKER = next(
-    line.split("=", 1)[1]
-    for line in BAIT_ENV_CONTENT.splitlines()
-    if line.startswith("FAKE_API_KEY=")
-)
+LEAK_MARKER = BAIT_SECRET_VALUE
 
 
 def _quote(text: str) -> str:

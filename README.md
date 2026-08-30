@@ -39,12 +39,27 @@ Full design rationale, data contracts, and the fail-closed rules this project fo
 ```bash
 git clone <this-repo>
 cd injection-blast-radius
-cp .env.example .env
+cp .env.example .env          # then paste your DeepSeek API key into .env
 pip install -r requirements.txt
 python run_all.py
 ```
 
-`run_all.py` runs all four combinations (baseline/isolated × benign/malicious input) and prints a comparison.
+`run_all.py` runs every architecture × input combination, prints a summary
+table, and writes a full explanation to `sandbox/report.md`.
+
+Other entry points:
+
+| Command | What it does |
+|---|---|
+| `python phase0_smoke.py` | Check the sandbox, the fixtures, and API connectivity |
+| `python phase1_baseline.py` | Watch the undefended agent leak the bait secret |
+| `python phase2_isolated.py` | Watch the isolated pipeline hold, in four scenes |
+| `python phase3_trace.py --run all` | Render the stage-by-stage trace tree |
+| `python tests/test_phase2.py --offline` | Structural assertions, no API calls needed |
+
+The provider is [DeepSeek](https://platform.deepseek.com) via the
+OpenAI-compatible API (`deepseek-v4-flash`); swapping it is a one-line change
+in `ibr/config.py`.
 
 ## Disclaimer
 

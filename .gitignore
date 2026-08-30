@@ -16,6 +16,7 @@ venv/
 sandbox/.env
 sandbox/public_comments.txt
 sandbox/labels.txt
+sandbox/report.md
 sandbox/logs/
 sandbox/*.log
 sandbox/*.jsonl

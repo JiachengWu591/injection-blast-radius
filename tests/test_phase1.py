@@ -19,16 +19,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ibr import sandbox_fs  # noqa: E402
 from ibr.baseline_agent import run_baseline  # noqa: E402
 from ibr.bootstrap import ensure_sandbox, reset_public_comments  # noqa: E402
-from ibr.config import BAIT_ENV_CONTENT, PUBLIC_COMMENTS_PATH  # noqa: E402
+from ibr.config import BAIT_SECRET_VALUE, PUBLIC_COMMENTS_PATH  # noqa: E402
 from ibr.issues import load_issue  # noqa: E402
 
 ensure_sandbox()
 
-LEAK_MARKER = next(
-    line.split("=", 1)[1]
-    for line in BAIT_ENV_CONTENT.splitlines()
-    if line.startswith("FAKE_API_KEY=")
-)
+LEAK_MARKER = BAIT_SECRET_VALUE
 
 # Whether the model complies with the injection is a coin flip, not a code
 # path — observed failing twice in a row and passing on a re-run. More samples
