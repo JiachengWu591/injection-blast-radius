@@ -187,6 +187,102 @@ def test_documentation_line_citations_still_point_at_the_right_code() -> None:
         )
 
 
+def test_readme_figure_exists_and_is_github_safe() -> None:
+    """The README's figure must render on GitHub and carry no real credential.
+
+    GitHub serves README images through an image proxy that strips `<style>`
+    and `<script>` from SVGs, so a figure that depends on either silently
+    renders wrong for every visitor. External references would be blocked
+    outright.
+    """
+    import re
+    import xml.etree.ElementTree as ET
+
+    root_dir = Path(__file__).resolve().parents[1]
+    figure = root_dir / "assets" / "comparison.svg"
+    assert figure.is_file(), "assets/comparison.svg is missing"
+
+    raw = figure.read_text(encoding="utf-8")
+    ET.fromstring(raw)  # raises if malformed
+
+    assert "<style" not in raw, "GitHub strips <style> from proxied SVGs"
+    assert "<script" not in raw, "scripts do not run in proxied SVGs"
+    # The SVG namespace is the only permitted http reference.
+    assert raw.count("http") == 1, "the figure references an external resource"
+
+    element = ET.fromstring(raw)
+    assert element.get("aria-label"), "the figure needs an aria-label"
+
+    # It legitimately contains the bait value; it must never contain a real key.
+    assert not re.search(r"(?<!fake-)sk-[A-Za-z0-9]{16,}", raw), (
+        "the figure contains a real-looking API key"
+    )
+
+    readme = (root_dir / "README.md").read_text(encoding="utf-8")
+    assert "assets/comparison.svg" in readme, "the README does not use the figure"
+
+
+def test_figure_panes_report_outcomes_honestly() -> None:
+    """The figure must not claim a leak that didn't happen, or hide one that did."""
+    from tools.make_comparison_svg import (
+        Observation,
+        build_baseline_pane,
+        build_isolated_pane,
+    )
+
+    def observation(*, baseline_leaked: bool, isolated_leaked: bool) -> Observation:
+        return Observation(
+            baseline_tools=("read_file", "post_comment"),
+            baseline_leaked=baseline_leaked,
+            baseline_leaked_lines=(
+                (f"FAKE_API_KEY={BAIT_SECRET_VALUE}",) if baseline_leaked else ()
+            ),
+            isolated_audit="high_risk",
+            isolated_stages=("security_audit", "audit_bypass", "reader", "executor"),
+            isolated_action="label_bug",
+            isolated_reasoning_chars=1272,
+            isolated_summary_chars=352,
+            isolated_leaked=isolated_leaked,
+            isolated_surface_empty=not isolated_leaked,
+        )
+
+    leaked_text = " ".join(
+        line.text for line in build_baseline_pane(observation(
+            baseline_leaked=True, isolated_leaked=False
+        )).lines
+    )
+    assert "SECRET LEAKED" in leaked_text
+    assert BAIT_SECRET_VALUE in leaked_text
+
+    clean_text = " ".join(
+        line.text for line in build_baseline_pane(observation(
+            baseline_leaked=False, isolated_leaked=False
+        )).lines
+    )
+    assert "SECRET LEAKED" not in clean_text, "the figure claimed a leak that didn't happen"
+    assert "no leak this run" in clean_text
+    assert "probabilistic" in clean_text
+
+    breach_text = " ".join(
+        line.text for line in build_isolated_pane(observation(
+            baseline_leaked=True, isolated_leaked=True
+        )).lines
+    )
+    assert "BREACHED" in breach_text and "defect" in breach_text, (
+        "a boundary breach must not render as a success"
+    )
+
+    held_text = " ".join(
+        line.text for line in build_isolated_pane(observation(
+            baseline_leaked=True, isolated_leaked=False
+        )).lines
+    )
+    assert "SECRET CONTAINED" in held_text
+    assert "STRUCTURED BOUNDARY" in held_text
+    # The caption must credit the boundary, not the audit it bypassed.
+    assert "audit was skipped" in held_text
+
+
 def test_terminal_table_lists_every_scenario() -> None:
     outcomes = _fake_outcomes()
     table = render_terminal(outcomes)

@@ -2,6 +2,10 @@
 
 > Reproduces a real 2026 indirect prompt-injection attack class targeting coding agents, and demonstrates why **architectural isolation — not prompt-level filtering — is the one defense layer that doesn't degrade as attacks get smarter.**
 
+![Side by side: an undefended agent publishes a placeholder secret into the simulated public comment file; the isolated pipeline, given the identical input and with its security audit deliberately bypassed, publishes nothing.](assets/comparison.svg)
+
+<sub>Generated from a real run by [`tools/make_comparison_svg.py`](tools/make_comparison_svg.py). The right-hand pane was measured with the security audit **bypassed**, so it shows the structural layer working alone — not the audit catching the attack.</sub>
+
 ## The result, first
 
 One command, six real runs against a real model, same fake secret in every one:
@@ -209,6 +213,7 @@ Other entry points:
 | `python phase2_isolated.py` | Watch the isolated pipeline hold, in four scenes |
 | `python phase3_trace.py --run all` | Render the stage-by-stage trace tree |
 | `python attack_matrix.py` | Run seven injection techniques against both architectures |
+| `python tools/make_comparison_svg.py` | Regenerate the figure above from a fresh run |
 | `python tests/test_phase2.py --offline` | Structural assertions, no API calls needed |
 
 The provider is [DeepSeek](https://platform.deepseek.com) via the
