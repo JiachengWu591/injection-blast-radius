@@ -1,0 +1,55 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  offline-assertions:
+    # Only the assertions that need no API key: the schema contracts, the
+    # executor whitelist, the sandbox guard, the log format, and the report
+    # renderer. These are the guarantees that must hold regardless of how any
+    # model behaves on a given day, so they are also the ones worth gating on.
+    #
+    # Phase 1's assertions are deliberately excluded: every one of them tests
+    # how a real model responds to an injection, which costs money and is
+    # probabilistic by nature (see PROJECT_SPEC.md §1.1). Running those in CI
+    # would buy flaky red builds, not confidence. Run them locally with
+    # `python tests/test_phase1.py`.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Phase 0 — sandbox, fixtures, credential hygiene
+        run: python tests/test_phase0.py
+
+      - name: Phase 2 — structural boundary
+        run: python tests/test_phase2.py --offline
+
+      - name: Phase 3 — observability
+        run: python tests/test_phase3.py --offline
+
+      - name: Phase 4 — comparison report
+        run: python tests/test_phase4.py --offline
+
+      - name: Confirm no live call slipped into the offline suite
+        # If any of the steps above had reached the API they would have failed
+        # already, since no DEEPSEEK_API_KEY is configured for this workflow.
+        # This makes that guarantee explicit rather than incidental.
+        run: |
+          if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
+            echo "DEEPSEEK_API_KEY is set in a workflow that must not use it"
+            exit 1
+          fi
+          echo "No API key present — the suite above ran entirely offline."
