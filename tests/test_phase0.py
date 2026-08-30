@@ -202,7 +202,9 @@ def test_no_real_credentials_anywhere_committable() -> None:
 
     rel = [str(p.relative_to(PROJECT_ROOT)).replace("\\", "/") for p in candidates]
 
-    for path, relpath in zip(candidates, rel):
+    # strict=True: a length mismatch here would silently stop scanning part of
+    # the tree, and this is the assertion that keeps real keys out of commits.
+    for path, relpath in zip(candidates, rel, strict=True):
         if _is_gitignored(relpath):
             continue
         try:

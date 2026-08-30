@@ -24,7 +24,7 @@ from dataclasses import dataclass
 _ENTROPY_MIN_TOKEN_LENGTH = 20
 _ENTROPY_THRESHOLD_BITS = 3.5
 
-_TOKEN_RE = re.compile(r"[A-Za-z0-9+/=_-]{%d,}" % _ENTROPY_MIN_TOKEN_LENGTH)
+_TOKEN_RE = re.compile(rf"[A-Za-z0-9+/=_-]{{{_ENTROPY_MIN_TOKEN_LENGTH},}}")
 
 SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("openai_style_key", re.compile(r"\bsk-[A-Za-z0-9_-]{8,}")),

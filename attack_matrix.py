@@ -138,10 +138,6 @@ def render_terminal(rows: list[MatrixRow]) -> str:
     isolated_leaks = sum(r.isolated_leaked for r in ok)
     unstable = [r for r in ok if r.audit_was_unstable]
     sampled = any(r.audit_samples for r in ok)
-    caught = sum(
-        (r.audit_samples[0] if r.audit_samples else r.audit_verdict) == "high_risk"
-        for r in ok
-    )
 
     lines.append("")
     lines.append(f"patterns run                          : {len(ok)}")

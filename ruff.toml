@@ -1,0 +1,43 @@
+# Lint configuration. Deliberately narrow: the rules kept are the ones that
+# find real defects, and the ones excluded are excluded for stated reasons
+# rather than because they were noisy.
+
+target-version = "py312"
+line-length = 88
+exclude = [".venv", "venv", "sandbox"]
+
+[lint]
+select = [
+    "F",    # pyflakes — unused imports, undefined names, dead locals
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "B",    # flake8-bugbear — likely bugs
+    "SIM",  # flake8-simplify
+    "UP",   # pyupgrade
+    "C4",   # comprehension misuse
+    "RET",  # unreachable / redundant returns
+    "PIE",  # misc lint
+]
+
+ignore = [
+    # The attack corpus contains Cyrillic homoglyphs on purpose — that IS one
+    # of the injection techniques under test (ibr/attack_corpus.py, key
+    # "homoglyph"). Prose elsewhere uses typographic dashes and ellipses.
+    # Flagging either would mean choosing between the lint passing and the
+    # experiment existing.
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    # E402 is unavoidable in the test entry points: they insert the repo root
+    # on sys.path before importing the package, which is what lets them run as
+    # plain scripts without an editable install.
+    "E402",
+    # Long lines are almost all URLs, tabular report strings, or f-strings
+    # whose wrapping would hurt readability more than the length does.
+    "E501",
+]
+
+[lint.per-file-ignores]
+# Test entry points intentionally import inside functions to keep the offline
+# suite importable without the API-dependent modules loaded.
+"tests/*" = ["PLC0415"]

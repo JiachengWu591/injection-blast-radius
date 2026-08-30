@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ibr import sandbox_fs  # noqa: E402
 from ibr.bootstrap import ensure_sandbox  # noqa: E402
-from ibr.comparison import SCENARIOS, Outcome, Scenario, run_scenario  # noqa: E402
+from ibr.comparison import SCENARIOS, Outcome, run_scenario  # noqa: E402
 from ibr.config import BAIT_SECRET_VALUE, REPORT_PATH  # noqa: E402
 from ibr.observability import group_runs, load_records  # noqa: E402
 from ibr.report import render_markdown, render_terminal  # noqa: E402

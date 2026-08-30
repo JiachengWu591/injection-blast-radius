@@ -31,9 +31,9 @@ import math
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from pathlib import Path
 from threading import Lock
-from typing import Callable
 
 import openai
 

@@ -29,13 +29,12 @@ from dataclasses import dataclass, field
 from ibr import sandbox_fs
 from ibr.attack_corpus import PATTERNS
 from ibr.bootstrap import ensure_sandbox
-from ibr.config import AUDIT_MODEL, SANDBOX_ROOT
+from ibr.config import SANDBOX_ROOT
 from ibr.issues import Issue, load_issue
 from ibr.llm import build_client
 from ibr.variance import (
     DEFAULT_CONCURRENCY,
     CorpusVariance,
-    SubjectVariance,
     measure_subject,
     newcombe_difference_interval,
     required_samples_per_group,

@@ -31,7 +31,10 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt ruff
+
+      - name: Lint
+        run: ruff check .
 
       - name: Phase 0 — sandbox, fixtures, credential hygiene
         run: python tests/test_phase0.py

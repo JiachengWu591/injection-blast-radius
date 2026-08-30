@@ -23,7 +23,7 @@ import json
 import os
 import uuid
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from . import sandbox_fs
 from .config import API_KEY_ENV_VAR, LOG_PATH
@@ -36,7 +36,7 @@ def new_run_id() -> str:
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    return datetime.now(UTC).isoformat(timespec="milliseconds")
 
 
 def scrub(text: str) -> str:
