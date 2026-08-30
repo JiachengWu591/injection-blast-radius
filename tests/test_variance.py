@@ -23,8 +23,16 @@ from ibr.variance import (  # noqa: E402
     PASSES_THROUGH,
     CorpusVariance,
     SubjectVariance,
+    newcombe_difference_interval,
+    required_samples_per_group,
     wilson_interval,
 )
+from model_comparison import (  # noqa: E402
+    Comparison,
+    ModelResult,
+)
+from model_comparison import render_markdown as render_comparison_markdown  # noqa: E402
+from model_comparison import render_terminal as render_comparison_terminal  # noqa: E402
 
 ensure_sandbox()
 
@@ -69,6 +77,49 @@ def test_wilson_does_not_claim_certainty_from_zero_observations() -> None:
 
 def test_wilson_handles_no_trials() -> None:
     assert wilson_interval(0, 0) == (0.0, 1.0)
+
+
+def test_newcombe_spans_zero_when_rates_match() -> None:
+    lo, hi = newcombe_difference_interval(5, 50, 5, 50)
+    assert lo < 0.0 < hi
+    assert abs(lo + hi) < 1e-9, "equal rates should give a symmetric interval"
+
+
+def test_newcombe_excludes_zero_for_a_large_real_difference() -> None:
+    lo, hi = newcombe_difference_interval(20, 25, 2, 25)
+    assert lo > 0.0, f"expected a significant difference, got [{lo}, {hi}]"
+
+
+def test_newcombe_is_antisymmetric() -> None:
+    forward = newcombe_difference_interval(2, 175, 0, 175)
+    reverse = newcombe_difference_interval(0, 175, 2, 175)
+    assert abs(forward[0] + reverse[1]) < 1e-12
+    assert abs(forward[1] + reverse[0]) < 1e-12
+
+
+def test_newcombe_stays_on_the_difference_scale() -> None:
+    for a in range(0, 26, 5):
+        for b in range(0, 26, 5):
+            lo, hi = newcombe_difference_interval(a, 25, b, 25)
+            assert -1.0 <= lo <= hi <= 1.0
+
+
+def test_newcombe_handles_no_trials() -> None:
+    assert newcombe_difference_interval(0, 0, 0, 10) == (-1.0, 1.0)
+
+
+def test_required_samples_grows_as_the_difference_shrinks() -> None:
+    big = required_samples_per_group(0.50, 0.25)
+    small = required_samples_per_group(0.011, 0.0055)
+    assert big is not None and small is not None
+    assert small > big * 10, "detecting a tiny difference must need far more n"
+    # Order-of-magnitude sanity: halving a ~1% rate is a thousands-of-samples job.
+    assert 1_000 < small < 100_000
+
+
+def test_required_samples_is_undefined_for_equal_rates() -> None:
+    assert required_samples_per_group(0.02, 0.02) is None
+    assert required_samples_per_group(0.0, 0.0) is None
 
 
 # =========================================================================
@@ -203,6 +254,121 @@ def test_terminal_table_reports_intervals_for_every_subject() -> None:
     assert terminal.count("[") >= 2, "every row needs an interval"
     for subject in _corpus(with_disagreement=True).subjects:
         assert subject.name in terminal
+
+
+# =========================================================================
+# Cross-model reporting honesty.
+# =========================================================================
+
+
+def _model_result(model: str, *, misses: int, trials_per_subject: int = 25) -> ModelResult:
+    """Seven attack subjects plus a benign control, with `misses` spread over them."""
+    subjects: list[SubjectVariance] = []
+    remaining = misses
+    for index in range(7):
+        adverse = 1 if remaining > 0 else 0
+        remaining -= adverse
+        verdicts = ["high_risk"] * (trials_per_subject - adverse) + [
+            "suspicious"
+        ] * adverse
+        subjects.append(
+            SubjectVariance(
+                key=f"attack{index}",
+                name=f"Attack {index}",
+                is_malicious=True,
+                verdicts=verdicts,
+            )
+        )
+    subjects.append(
+        SubjectVariance(
+            key="benign_control",
+            name="Benign bug report (control)",
+            is_malicious=False,
+            verdicts=["safe"] * trials_per_subject,
+        )
+    )
+    return ModelResult(
+        model=model,
+        corpus=CorpusVariance(subjects=subjects, samples_requested=trials_per_subject),
+    )
+
+
+def test_comparison_refuses_to_credit_a_model_the_data_cannot_separate() -> None:
+    """The failure mode this whole script exists to prevent.
+
+    One miss versus zero looks like an improvement and is not one at this n.
+    A report that presented it as a win would be the exact mistake the project
+    argues against — treating a sampled rate as if it were a guarantee.
+    """
+    comparison = Comparison(
+        models=[
+            _model_result("weaker-model", misses=1),
+            _model_result("stronger-model", misses=0),
+        ],
+        samples_requested=25,
+    )
+
+    markdown = render_comparison_markdown(comparison)
+    assert "does not distinguish the two models" in markdown
+    assert "consistent with the rates being equal" in markdown
+    assert "samples per\nmodel" in markdown or "samples per model" in markdown
+    assert "not evidence that the newer model is safer" in markdown
+    assert "significantly better" not in markdown, (
+        "the report credited a model on data that cannot separate them"
+    )
+
+    terminal = render_comparison_terminal(comparison)
+    assert "does not distinguish" in terminal
+    assert "80% power" in terminal
+
+
+def test_comparison_does_credit_a_model_when_the_data_supports_it() -> None:
+    """The complement: honesty cuts both ways, or it's just pessimism."""
+    comparison = Comparison(
+        models=[
+            _model_result("weaker-model", misses=7),
+            _model_result("stronger-model", misses=0),
+        ],
+        samples_requested=25,
+    )
+    markdown = render_comparison_markdown(comparison)
+    assert "significantly better" in markdown
+    assert "stronger-model" in markdown
+    assert "does not distinguish the two models" not in markdown
+
+
+def test_comparison_always_reports_both_error_directions() -> None:
+    comparison = Comparison(
+        models=[_model_result("a", misses=1), _model_result("b", misses=0)],
+        samples_requested=25,
+    )
+    markdown = render_comparison_markdown(comparison)
+    assert "False negatives" in markdown
+    assert "False positives" in markdown
+    assert "benign control" in markdown.lower()
+
+
+def test_comparison_states_that_a_better_rate_is_still_only_a_rate() -> None:
+    """Even a real improvement doesn't change the kind of claim available."""
+    comparison = Comparison(
+        models=[_model_result("a", misses=7), _model_result("b", misses=0)],
+        samples_requested=25,
+    )
+    markdown = render_comparison_markdown(comparison)
+    assert "still be a rate" in markdown
+    assert "no API calls at all" in markdown
+    assert "two materials" in markdown
+
+
+def test_comparison_per_subject_table_covers_every_model() -> None:
+    comparison = Comparison(
+        models=[_model_result("alpha", misses=1), _model_result("beta", misses=0)],
+        samples_requested=25,
+    )
+    for renderer in (render_comparison_markdown, render_comparison_terminal):
+        out = renderer(comparison)
+        assert "alpha" in out and "beta" in out
+        assert "Benign bug report (control)" in out
 
 
 # =========================================================================

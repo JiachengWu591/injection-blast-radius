@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 
 import openai
 
+from .config import AUDIT_MODEL
 from .issues import Issue
 from .pipeline import audit_only
 from .schemas import RISK_LEVELS
@@ -65,6 +66,67 @@ def wilson_interval(
         p * (1.0 - p) / trials + z2 / (4.0 * trials * trials)
     )
     return (max(0.0, centre - margin), min(1.0, centre + margin))
+
+
+def newcombe_difference_interval(
+    successes_a: int,
+    trials_a: int,
+    successes_b: int,
+    trials_b: int,
+    *,
+    z: float = 1.959963985,
+) -> tuple[float, float]:
+    """95% interval for (rate_a - rate_b), Newcombe's square-and-add method.
+
+    The companion to `wilson_interval` for the question "did switching models
+    change anything". Built from the two Wilson intervals rather than a normal
+    approximation to the difference, for the same reason: the rates being
+    compared here sit near zero, where the normal interval misbehaves.
+
+    An interval spanning 0 means the data cannot distinguish the two rates. At
+    the sample sizes this project can afford that is the likely answer, and
+    saying so is the point — "the newer model looks better" is not a finding
+    when a handful of samples couldn't have shown otherwise.
+    """
+    if trials_a <= 0 or trials_b <= 0:
+        return (-1.0, 1.0)
+
+    p_a = successes_a / trials_a
+    p_b = successes_b / trials_b
+    lo_a, hi_a = wilson_interval(successes_a, trials_a, z=z)
+    lo_b, hi_b = wilson_interval(successes_b, trials_b, z=z)
+
+    difference = p_a - p_b
+    lower = difference - math.sqrt((p_a - lo_a) ** 2 + (hi_b - p_b) ** 2)
+    upper = difference + math.sqrt((hi_a - p_a) ** 2 + (p_b - lo_b) ** 2)
+    return (max(-1.0, lower), min(1.0, upper))
+
+
+def required_samples_per_group(
+    rate_a: float,
+    rate_b: float,
+    *,
+    z_alpha: float = 1.959963985,  # two-sided alpha = 0.05
+    z_power: float = 0.8416212336,  # power = 0.80
+) -> int | None:
+    """Roughly how many samples per model it would take to tell two rates apart.
+
+    Exists to put a number on why "the newer model seems better" is usually not
+    a finding. Detecting a halving of a ~1% rate needs samples in the
+    thousands per model; a few hundred cannot resolve it, so a clean run on a
+    newer model is compatible with no improvement at all.
+
+    Normal-approximation sample size, which is crude at rates this small —
+    treat the result as an order of magnitude, not a target. Returns None when
+    the two rates are equal, since no sample size distinguishes them.
+    """
+    delta = abs(rate_a - rate_b)
+    if delta < 1e-12:
+        return None
+    variance = rate_a * (1.0 - rate_a) + rate_b * (1.0 - rate_b)
+    if variance <= 0.0:
+        return None
+    return math.ceil(((z_alpha + z_power) ** 2) * variance / (delta * delta))
 
 
 @dataclass
@@ -163,6 +225,7 @@ def measure_subject(
     samples: int = DEFAULT_SAMPLES,
     concurrency: int = DEFAULT_CONCURRENCY,
     client: openai.OpenAI | None = None,
+    audit_model: str = AUDIT_MODEL,
 ) -> SubjectVariance:
     """Call the audit `samples` times on one fixed input.
 
@@ -175,7 +238,9 @@ def measure_subject(
 
     def one(_index: int) -> str | None:
         try:
-            return audit_only(issue, client=client).risk_level
+            return audit_only(
+                issue, client=client, audit_model=audit_model
+            ).risk_level
         except openai.APIError:
             return None
 

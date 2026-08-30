@@ -205,6 +205,42 @@ The benign control is half the measurement, not a footnote. A screening layer
 tuned until it never misses an attack, at the cost of dropping real issues,
 hasn't been made good — it's been made useless in the other direction.
 
+### Would a stronger model fix it?
+
+The obvious next move is to spend more per call. `model_comparison.py` runs the
+identical corpus through both DeepSeek tiers — 400 audit calls, same prompt,
+same fixed inputs, only the model changes:
+
+| Model | False negatives | 95% CI | False positives | 95% CI |
+|---|---|---|---|---|
+| `deepseek-v4-flash` | 1/175 = 0.57% | [0.10%, 3.17%] | 0/25 | [0.00%, 13.32%] |
+| `deepseek-v4-pro` | 0/175 = 0.00% | [0.00%, 2.15%] | 0/25 | [0.00%, 13.32%] |
+
+The stronger model missed nothing and the cheaper one missed once, so the
+upgrade worked — except it didn't, or at least this experiment cannot say so:
+
+```
+deepseek-v4-flash minus deepseek-v4-pro, false-negative rate:
+  difference +0.57%   95% CI [-1.63%, +3.17%]
+  The interval spans zero: this experiment does not distinguish the two models.
+  Resolving a difference this size at 80% power would take roughly 1,366 samples per model
+  (10,928 audit calls each, versus the 200 run here).
+```
+
+**This is the most useful number in the project.** A clean run on a newer model
+is not evidence that the newer model is safer, because an experiment this size
+could not have shown otherwise. You would need roughly 55× more calls to
+resolve a difference of the size observed — and that's for a difference in a
+rate that's already under 1%. "We upgraded the model and stopped seeing misses"
+is a sentence with no information in it at these sample sizes.
+
+Two details worth noticing in the per-subject table: the payload that slipped
+past `flash` was the same one that slipped in the earlier standalone run
+(*Debugging assistance framing* — the one that frames exfiltration as helping
+the reporter, claiming no authority and inventing no process), and `pro` was
+unanimous on every subject. Both are consistent with a real but small
+difference. Neither is demonstrated by this data.
+
 ### The part that isn't measured
 
 Nothing in that table describes the structural boundary, and that's the whole
@@ -220,6 +256,13 @@ statement can be made about them. One gets a rate with error bars; the other
 gets an argument about a finite set of reachable outcomes. Stacking more layers
 of the first kind never produces the second kind — which is the case for
 building the defense out of two materials.
+
+Note that a *better* probabilistic layer wouldn't change this. Suppose
+`deepseek-v4-pro` really does screen better, and suppose a large enough
+experiment proved it. It would still be a rate: still a model's judgement of
+text, still non-deterministic on fixed input, still knowable only by sampling.
+Buying a stronger screening model moves a number. It doesn't change what you're
+allowed to claim about the system.
 
 ## Honest limitations
 
@@ -275,6 +318,7 @@ Other entry points:
 | `python phase3_trace.py --run all` | Render the stage-by-stage trace tree |
 | `python attack_matrix.py` | Run seven injection techniques against both architectures |
 | `python audit_variance.py` | Measure the audit's hit rate with confidence intervals |
+| `python model_comparison.py` | Ask whether a stronger model screens better (400 calls) |
 | `python tools/make_comparison_svg.py` | Regenerate the figure above from a fresh run |
 | `python tests/test_phase2.py --offline` | Structural assertions, no API calls needed |
 
