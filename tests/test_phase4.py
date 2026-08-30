@@ -172,12 +172,12 @@ def test_documentation_line_citations_still_point_at_the_right_code() -> None:
 
     # The four that carry the argument, by content rather than by number.
     anchors = {
-        ("ibr/schemas.py", 86): "def parse_audit_verdict",
-        ("ibr/schemas.py", 155): "def parse_reader_output",
+        ("ibr/schemas.py", 96): "def parse_audit_verdict",
+        ("ibr/schemas.py", 165): "def parse_reader_output",
         ("ibr/executor.py", 33): "COMMENT_TEMPLATES",
         ("ibr/executor.py", 98): "if action not in SUGGESTED_ACTIONS",
         ("ibr/executor.py", 104): "match action:",
-        ("ibr/pipeline.py", 365): "The structured boundary",
+        ("ibr/pipeline.py", 369): "The structured boundary",
         ("ibr/baseline_agent.py", 149): "def _post_comment_impl",
     }
     for (rel, line_no), expected in anchors.items():

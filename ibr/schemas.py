@@ -77,6 +77,16 @@ class AuditVerdict:
     reasoning: str
     risk_level: str
     matched_patterns: tuple[str, ...]
+    completed: bool = True
+    """False when the call failed and `risk_level` is the fail-closed default.
+
+    The pipeline is right to treat a broken audit as high_risk — refusing to
+    act is the safe response to not knowing. But a *measurement* must not
+    count that same value as evidence the model detected anything, or every
+    timeout inflates the apparent hit rate and the reported miss rate comes
+    out optimistic. Same value, two different meanings, so the distinction has
+    to be carried explicitly rather than inferred from the risk level.
+    """
 
     @property
     def is_high_risk(self) -> bool:

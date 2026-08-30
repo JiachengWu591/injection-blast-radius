@@ -233,6 +233,28 @@ def render_markdown(result: CorpusVariance) -> str:
         "defense from two materials.\n"
     )
 
+    dropped = sum(s.errors for s in result.subjects)
+    parts.append("## Call failures\n")
+    if dropped:
+        parts.append(
+            f"{dropped} call(s) failed (timeout, rate limit, or malformed "
+            "output) and were excluded from every count above.\n\n"
+            "They are excluded rather than counted because `audit_only` fails "
+            "closed to `high_risk` so the pipeline refuses to act — the right "
+            "behaviour for the pipeline, and a lie if a measurement treats it "
+            "as a detection. Counting failures as catches is how a screening "
+            "layer with a broken connection reports a perfect hit rate.\n"
+        )
+        for subject in result.subjects:
+            if subject.errors:
+                parts.append(
+                    f"- {subject.name}: {subject.errors} failed, "
+                    f"{subject.trials} usable"
+                )
+        parts.append("")
+    else:
+        parts.append("No calls failed; every count above is a real model verdict.\n")
+
     parts.append("## Caveats\n")
     parts.append(
         f"- n={result.samples_requested} per subject. Wilson intervals are "

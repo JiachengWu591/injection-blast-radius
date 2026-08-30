@@ -74,11 +74,15 @@ def ping(model: str, *, client: openai.OpenAI | None = None) -> PingResult:
             }
         ],
     )
+    # `usage` is optional in the response schema, so reading through it
+    # unguarded turns a provider quirk into an AttributeError in the very
+    # script whose job is to tell you whether the API works at all.
+    usage = response.usage
     return PingResult(
         model=response.model,
         text=(response.choices[0].message.content or "").strip(),
-        input_tokens=response.usage.prompt_tokens,
-        output_tokens=response.usage.completion_tokens,
+        input_tokens=usage.prompt_tokens if usage else 0,
+        output_tokens=usage.completion_tokens if usage else 0,
     )
 
 
@@ -145,7 +149,12 @@ def call_structured_tool(
 
     last_error = "no attempt was made"
     for attempt in range(1, retries + 2):
-        response = client.chat.completions.create(
+        # The suppression below: the openai package types messages/tools/
+        # tool_choice as TypedDict unions and this project builds them as plain
+        # dicts, because the retry path appends assistant and tool turns
+        # dynamically. Kept on this one call so the checker stays useful on the
+        # rest of the module.
+        response = client.chat.completions.create(  # type: ignore[call-overload]
             model=model,
             max_tokens=max_tokens,
             messages=messages,

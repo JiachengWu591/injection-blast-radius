@@ -174,7 +174,9 @@ def audit_only(
     anecdote and becomes a number (see attack_matrix.py --audit-samples).
 
     Fails closed to high_risk, same as the full pipeline: a broken check must
-    never read as a clean verdict.
+    never read as a clean verdict. The returned verdict carries
+    `completed=False` in that case, because a caller measuring the audit's
+    accuracy must not count a timeout as a detection — see AuditVerdict.
     """
     client = client or build_client()
     try:
@@ -194,6 +196,7 @@ def audit_only(
             reasoning="(audit did not complete)",
             risk_level="high_risk",
             matched_patterns=("audit_failure",),
+            completed=False,
         )
 
 
@@ -244,6 +247,7 @@ def run_isolated(
             reasoning="(audit did not complete)",
             risk_level="high_risk",
             matched_patterns=("audit_failure",),
+            completed=False,
         )
         result.stages.append(
             StageRecord(

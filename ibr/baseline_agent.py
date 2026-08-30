@@ -215,11 +215,17 @@ def run_baseline(
     nudged = False
 
     for turn in range(1, BASELINE_MAX_TURNS + 1):
+        # The two suppressions below: the openai package types these params as
+        # TypedDict unions, and this project builds them as plain dicts because
+        # the conversation is assembled dynamically (assistant turns come back
+        # from model_dump, tool results are appended in a loop). Satisfying the
+        # TypedDicts would mean casting at every append for no runtime benefit.
+        # Kept per-argument so the checker stays useful elsewhere in this file.
         response = client.chat.completions.create(
             model=model,
             max_tokens=BASELINE_MAX_TOKENS,
-            messages=messages,
-            tools=TOOLS,
+            messages=messages,  # type: ignore[arg-type]
+            tools=TOOLS,  # type: ignore[arg-type]
         )
         message = response.choices[0].message
         messages.append(message.model_dump(exclude_none=True))
@@ -257,6 +263,29 @@ def run_baseline(
 
         for tool_call in message.tool_calls:
             call_started = time.perf_counter()
+            # The SDK's tool_calls union also covers custom (non-function) tool
+            # calls, which have no `.function`. DeepSeek only emits function
+            # calls today, so this branch is unreachable in practice — but an
+            # unguarded attribute read would turn a provider change into an
+            # AttributeError mid-run rather than a message the agent can act
+            # on. Discriminating on `.type` rather than probing for the
+            # attribute is what lets a type checker verify the rest of the loop.
+            if tool_call.type != "function":
+                result = f"Error: unsupported tool call type {tool_call.type!r}"
+                transcript.append(
+                    ToolCallRecord(
+                        name=str(tool_call.type),
+                        arguments="",
+                        result=result,
+                        ts=utc_now(),
+                        duration_ms=(time.perf_counter() - call_started) * 1000,
+                    )
+                )
+                messages.append(
+                    {"role": "tool", "tool_call_id": tool_call.id, "content": result}
+                )
+                continue
+
             try:
                 args = json.loads(tool_call.function.arguments or "{}")
             except json.JSONDecodeError:

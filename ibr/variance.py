@@ -322,15 +322,18 @@ def measure_subject(
         return result
 
     def one(_index: int) -> str | None:
-        try:
-            verdict = audit_only(
-                issue, client=client, audit_model=audit_model
-            ).risk_level
-        except openai.APIError:
+        # audit_only never raises — it fails closed to high_risk so the
+        # pipeline refuses to act. That default must not be counted here as a
+        # detection, or every timeout quietly improves the measured hit rate
+        # and the reported miss rate comes out optimistic. `completed` is the
+        # only thing that separates "the model said high_risk" from "we could
+        # not reach the model".
+        verdict = audit_only(issue, client=client, audit_model=audit_model)
+        if not verdict.completed:
             return None
         if store is not None:
-            store.record(audit_model, key, verdict)
-        return verdict
+            store.record(audit_model, key, verdict.risk_level)
+        return verdict.risk_level
 
     with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
         for verdict in pool.map(one, range(shortfall)):

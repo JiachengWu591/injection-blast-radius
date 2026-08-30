@@ -74,7 +74,9 @@ def audit_output(text: str) -> OutputAuditResult:
             findings.append(f"entropy:{token[:8]}…({len(token)} chars)")
 
     # Deduplicate while preserving order, so a repeated pattern reads as one
-    # finding rather than inflating the count.
-    seen: set[str] = set()
-    unique = tuple(f for f in findings if not (f in seen or seen.add(f)))
+    # finding rather than inflating the count. dict.fromkeys rather than the
+    # `f in seen or seen.add(f)` idiom: that version relies on set.add
+    # returning None to be falsy, which is true but not worth making a reader
+    # verify.
+    unique = tuple(dict.fromkeys(findings))
     return OutputAuditResult(blocked=bool(unique), findings=unique)

@@ -393,6 +393,138 @@ def test_measure_subject_caps_reuse_at_the_requested_n() -> None:
 
 
 # =========================================================================
+# Failed calls must never count as detections.
+# =========================================================================
+
+
+def test_a_failed_audit_call_is_not_counted_as_a_detection() -> None:
+    """The measurement's most dangerous failure mode, pinned.
+
+    `audit_only` fails closed to high_risk so the pipeline refuses to act.
+    That is correct for the pipeline and a lie for a measurement: counting a
+    timeout as a catch is how a screening layer with a broken connection
+    reports a perfect hit rate. This regressed silently once — the except
+    clause meant to catch it was unreachable, because audit_only swallows
+    APIError itself and never propagates.
+    """
+    import openai as _openai
+
+    from ibr import pipeline as _pipeline
+    from ibr.issues import Issue
+    from ibr.variance import measure_subject
+
+    original = _pipeline.call_structured_tool
+
+    def always_fails(**_kwargs):
+        raise _openai.APITimeoutError(request=None)
+
+    _pipeline.call_structured_tool = always_fails
+    try:
+        result = measure_subject(
+            "subj",
+            "Subject",
+            Issue(issue_id="x", title="t", author="a", body="b"),
+            is_malicious=True,
+            samples=5,
+            concurrency=1,
+        )
+    finally:
+        _pipeline.call_structured_tool = original
+
+    assert result.errors == 5, "failed calls were not counted as errors"
+    assert result.trials == 0, (
+        f"failed calls leaked into the sample set as {result.verdicts}"
+    )
+    # With no usable samples the interval must be maximally uninformative,
+    # not a confident zero.
+    assert result.interval == (0.0, 1.0)
+
+
+def test_a_failed_audit_call_is_never_written_to_the_sample_store() -> None:
+    """A poisoned store would survive the process and contaminate later runs."""
+    import tempfile
+    from pathlib import Path as _Path
+
+    import openai as _openai
+
+    from ibr import pipeline as _pipeline
+    from ibr.issues import Issue
+    from ibr.variance import SampleStore, measure_subject
+
+    original = _pipeline.call_structured_tool
+
+    def always_fails(**_kwargs):
+        raise _openai.APITimeoutError(request=None)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = SampleStore(_Path(tmp) / "samples.jsonl")
+        _pipeline.call_structured_tool = always_fails
+        try:
+            measure_subject(
+                "subj",
+                "Subject",
+                Issue(issue_id="x", title="t", author="a", body="b"),
+                is_malicious=True,
+                samples=4,
+                concurrency=1,
+                store=store,
+            )
+        finally:
+            _pipeline.call_structured_tool = original
+
+        assert store.total() == 0, "a failed call was checkpointed as a verdict"
+
+
+def test_audit_verdict_marks_the_fail_closed_default() -> None:
+    """The flag the distinction rests on, checked at the source."""
+    import openai as _openai
+
+    from ibr import pipeline as _pipeline
+    from ibr.issues import Issue
+    from ibr.pipeline import audit_only
+
+    original = _pipeline.call_structured_tool
+
+    def always_fails(**_kwargs):
+        raise _openai.APITimeoutError(request=None)
+
+    _pipeline.call_structured_tool = always_fails
+    try:
+        verdict = audit_only(Issue(issue_id="x", title="t", author="a", body="b"))
+    finally:
+        _pipeline.call_structured_tool = original
+
+    # The pipeline still needs the safe default...
+    assert verdict.risk_level == "high_risk"
+    assert verdict.is_high_risk is True
+    # ...but it must be distinguishable from a real verdict.
+    assert verdict.completed is False
+    assert verdict.matched_patterns == ("audit_failure",)
+
+
+def test_a_real_verdict_is_marked_complete() -> None:
+    from ibr.schemas import parse_audit_verdict
+
+    verdict = parse_audit_verdict(
+        {"reasoning": "thought about it", "risk_level": "safe", "matched_patterns": []}
+    )
+    assert verdict.completed is True, "a parsed verdict must not look like a failure"
+
+
+def test_report_states_whether_any_calls_failed() -> None:
+    """Silence about failures reads as 'there were none'."""
+    clean = _corpus(with_disagreement=False)
+    assert "No calls failed" in render_markdown(clean)
+
+    degraded = _corpus(with_disagreement=False)
+    degraded.subjects[0].errors = 3
+    markdown = render_markdown(degraded)
+    assert "3 call(s) failed" in markdown
+    assert "excluded from every count" in markdown
+    assert "reports a perfect hit rate" in markdown
+
+
+# =========================================================================
 # Cross-model reporting honesty.
 # =========================================================================
 
