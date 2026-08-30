@@ -57,13 +57,23 @@ jobs:
       - name: Audit variance — statistics and reporting honesty
         run: python tests/test_variance.py --offline
 
-      - name: Confirm no live call slipped into the offline suite
-        # If any of the steps above had reached the API they would have failed
-        # already, since no DEEPSEEK_API_KEY is configured for this workflow.
-        # This makes that guarantee explicit rather than incidental.
+      - name: Confirm the offline suite really is offline
+        # The steps above pass with no DEEPSEEK_API_KEY configured, which is
+        # the actual guarantee: a test that reached the network would have
+        # failed on the missing key rather than silently making a call.
+        #
+        # This is not hypothetical. Three assertions once passed locally and
+        # broke here, because they monkeypatched the request function but still
+        # let audit_only build a client first — so they needed a key to prove
+        # they needed no key. A developer machine with a .env cannot catch
+        # that; only a run with no key can.
         run: |
           if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
             echo "DEEPSEEK_API_KEY is set in a workflow that must not use it"
             exit 1
           fi
-          echo "No API key present — the suite above ran entirely offline."
+          if [ -f .env ]; then
+            echo ".env exists in CI; the offline guarantee is not being tested"
+            exit 1
+          fi
+          echo "No API key and no .env — the suite above ran entirely offline."

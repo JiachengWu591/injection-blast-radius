@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -418,6 +419,13 @@ def test_a_failed_audit_call_is_not_counted_as_a_detection() -> None:
     def always_fails(**_kwargs):
         raise _openai.APITimeoutError(request=None)
 
+    # A stand-in client, so audit_only skips build_client() and with it the
+    # API-key check. Without this the test needs a key to prove it needs no
+    # key: it passed locally where .env exists and failed in CI where it
+    # doesn't. The object is never touched, because the patched call raises
+    # before anything uses it.
+    fake_client = cast("Any", object())
+
     _pipeline.call_structured_tool = always_fails
     try:
         result = measure_subject(
@@ -427,6 +435,7 @@ def test_a_failed_audit_call_is_not_counted_as_a_detection() -> None:
             is_malicious=True,
             samples=5,
             concurrency=1,
+            client=fake_client,
         )
     finally:
         _pipeline.call_structured_tool = original
@@ -456,6 +465,13 @@ def test_a_failed_audit_call_is_never_written_to_the_sample_store() -> None:
     def always_fails(**_kwargs):
         raise _openai.APITimeoutError(request=None)
 
+    # A stand-in client, so audit_only skips build_client() and with it the
+    # API-key check. Without this the test needs a key to prove it needs no
+    # key: it passed locally where .env exists and failed in CI where it
+    # doesn't. The object is never touched, because the patched call raises
+    # before anything uses it.
+    fake_client = cast("Any", object())
+
     with tempfile.TemporaryDirectory() as tmp:
         store = SampleStore(_Path(tmp) / "samples.jsonl")
         _pipeline.call_structured_tool = always_fails
@@ -468,6 +484,7 @@ def test_a_failed_audit_call_is_never_written_to_the_sample_store() -> None:
                 samples=4,
                 concurrency=1,
                 store=store,
+                client=fake_client,
             )
         finally:
             _pipeline.call_structured_tool = original
@@ -488,9 +505,19 @@ def test_audit_verdict_marks_the_fail_closed_default() -> None:
     def always_fails(**_kwargs):
         raise _openai.APITimeoutError(request=None)
 
+    # A stand-in client, so audit_only skips build_client() and with it the
+    # API-key check. Without this the test needs a key to prove it needs no
+    # key: it passed locally where .env exists and failed in CI where it
+    # doesn't. The object is never touched, because the patched call raises
+    # before anything uses it.
+    fake_client = cast("Any", object())
+
     _pipeline.call_structured_tool = always_fails
     try:
-        verdict = audit_only(Issue(issue_id="x", title="t", author="a", body="b"))
+        verdict = audit_only(
+            Issue(issue_id="x", title="t", author="a", body="b"),
+            client=fake_client,
+        )
     finally:
         _pipeline.call_structured_tool = original
 
