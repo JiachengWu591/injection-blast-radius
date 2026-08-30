@@ -7,10 +7,12 @@ sandbox/public_comments.txt.
 
 Usage:
     python phase2_isolated.py
+    python phase2_isolated.py --scene 4     # deterministic, makes no API calls
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 import textwrap
 
@@ -114,19 +116,41 @@ def run_worst_case() -> None:
 
 
 def main() -> int:
+    # argparse rather than reading sys.argv loosely: without it, `--help` is
+    # silently ignored and this script runs four billable scenes instead of
+    # printing usage, which is a mean surprise for anyone exploring the repo.
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--scene",
+        type=int,
+        choices=(1, 2, 3, 4),
+        action="append",
+        help=(
+            "run only these scenes (repeatable). Scene 4 is deterministic and "
+            "makes no API calls, so it is the cheapest way to see the "
+            "structural boundary hold."
+        ),
+    )
+    args = parser.parse_args()
+    scenes = set(args.scene) if args.scene else {1, 2, 3, 4}
+
     ensure_sandbox()
     reset_public_comments()
     reset_labels()
 
     try:
-        run_one("benign", label="scene 1 — benign")
-        run_one("malicious", label="scene 2 — attack, audit holds")
-        run_one(
-            "malicious",
-            label="scene 3 — attack, audit BYPASSED",
-            bypass=True,
-        )
-        run_worst_case()
+        if 1 in scenes:
+            run_one("benign", label="scene 1 — benign")
+        if 2 in scenes:
+            run_one("malicious", label="scene 2 — attack, audit holds")
+        if 3 in scenes:
+            run_one(
+                "malicious",
+                label="scene 3 — attack, audit BYPASSED",
+                bypass=True,
+            )
+        if 4 in scenes:
+            run_worst_case()
     except openai.AuthenticationError:
         print("\nFAILED: the API key was rejected. Check DEEPSEEK_API_KEY in .env.", file=sys.stderr)
         return 1

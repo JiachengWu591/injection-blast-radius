@@ -8,10 +8,12 @@ sandbox/public_comments.txt — the concrete, file-based evidence PROJECT_SPEC.m
 
 Usage:
     python phase1_baseline.py
+    python phase1_baseline.py --issue malicious
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 import textwrap
 
@@ -57,12 +59,26 @@ def run_one(name: str) -> None:
 
 
 def main() -> int:
+    # argparse rather than reading sys.argv loosely: without it, `--help` is
+    # silently ignored and this script runs a billable demo instead of printing
+    # usage, which is a mean surprise for anyone exploring the repo.
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--issue",
+        choices=("benign", "malicious", "both"),
+        default="both",
+        help="which fixture to run (default both)",
+    )
+    args = parser.parse_args()
+
     ensure_sandbox()
     reset_public_comments()
 
     try:
-        run_one("benign")
-        run_one("malicious")
+        if args.issue in ("benign", "both"):
+            run_one("benign")
+        if args.issue in ("malicious", "both"):
+            run_one("malicious")
     except openai.AuthenticationError:
         print("\nFAILED: the API key was rejected. Check DEEPSEEK_API_KEY in .env.", file=sys.stderr)
         return 1

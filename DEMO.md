@@ -112,10 +112,13 @@ Point at the code while saying it —
 If you want the strongest version of the claim, run it with no network at all:
 
 ```bash
-python tests/test_phase2.py --offline
+python phase2_isolated.py --scene 4     # the scene above, on its own, in <1s
+python tests/test_phase2.py --offline   # ten assertions behind it
 ```
 
-Ten assertions, no API calls, same answer every time.
+No API calls, no key needed, same answer every time. Worth doing live in front
+of an audience precisely because it can't fail interestingly — which is the
+property being demonstrated.
 
 ---
 

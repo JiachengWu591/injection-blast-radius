@@ -380,8 +380,9 @@ Other entry points:
 | `python phase0_smoke.py` | Check the sandbox, the fixtures, and API connectivity |
 | `python phase1_baseline.py` | Watch the undefended agent leak the bait secret |
 | `python phase2_isolated.py` | Watch the isolated pipeline hold, in four scenes |
+| `python phase2_isolated.py --scene 4` | The structural boundary holding, in 0.8s with no API key |
 | `python phase3_trace.py --run all` | Render the stage-by-stage trace tree |
-| `python attack_matrix.py` | Run seven injection techniques against both architectures |
+| `python attack_matrix.py` | Run twelve injection techniques against both architectures |
 | `python audit_variance.py --samples 200` | Measure the audit's hit rate with confidence intervals |
 | `python model_comparison.py` | Ask whether a stronger model screens better (400 calls) |
 | `python tools/make_comparison_svg.py` | Regenerate the figure above from a fresh run |
