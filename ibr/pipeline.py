@@ -160,6 +160,43 @@ def _issue_as_untrusted_input(issue: Issue) -> str:
     )
 
 
+def audit_only(
+    issue: Issue,
+    *,
+    client: openai.OpenAI | None = None,
+    audit_model: str = AUDIT_MODEL,
+) -> AuditVerdict:
+    """Run just the security audit. Used to measure its run-to-run variance.
+
+    The audit is a model judging text, so its verdict on a fixed input is a
+    distribution rather than a value — observed rating one payload `high_risk`
+    three times and `suspicious` once. Sampling it is how that stops being an
+    anecdote and becomes a number (see attack_matrix.py --audit-samples).
+
+    Fails closed to high_risk, same as the full pipeline: a broken check must
+    never read as a clean verdict.
+    """
+    client = client or build_client()
+    try:
+        call = call_structured_tool(
+            model=audit_model,
+            system=AUDIT_SYSTEM_PROMPT,
+            user=_issue_as_untrusted_input(issue),
+            tool_name=AUDIT_TOOL_NAME,
+            tool_description="Report the security assessment of this issue body.",
+            parameters=AUDIT_SCHEMA,
+            client=client,
+            max_tokens=PIPELINE_MAX_TOKENS,
+        )
+        return parse_audit_verdict(call.payload)
+    except (StructuredOutputFailure, SchemaViolation, openai.APIError):
+        return AuditVerdict(
+            reasoning="(audit did not complete)",
+            risk_level="high_risk",
+            matched_patterns=("audit_failure",),
+        )
+
+
 def run_isolated(
     issue: Issue,
     *,

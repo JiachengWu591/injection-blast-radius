@@ -177,7 +177,7 @@ def test_documentation_line_citations_still_point_at_the_right_code() -> None:
         ("ibr/executor.py", 33): "COMMENT_TEMPLATES",
         ("ibr/executor.py", 98): "if action not in SUGGESTED_ACTIONS",
         ("ibr/executor.py", 104): "match action:",
-        ("ibr/pipeline.py", 328): "The structured boundary",
+        ("ibr/pipeline.py", 365): "The structured boundary",
         ("ibr/baseline_agent.py", 149): "def _post_comment_impl",
     }
     for (rel, line_no), expected in anchors.items():

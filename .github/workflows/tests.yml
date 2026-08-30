@@ -45,6 +45,9 @@ jobs:
       - name: Phase 4 — comparison report
         run: python tests/test_phase4.py --offline
 
+      - name: Attack corpus — safety rails and matrix rendering
+        run: python tests/test_attack_corpus.py --offline
+
       - name: Confirm no live call slipped into the offline suite
         # If any of the steps above had reached the API they would have failed
         # already, since no DEEPSEEK_API_KEY is configured for this workflow.
