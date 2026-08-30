@@ -186,9 +186,14 @@ match reader_output.suggested_action:
 
 ## 8. 完成标志
 
-- [ ] Phase 0–4 全部通过各自验收标准（含自动化断言脚本）
-- [ ] 安全审计 Agent 和 Reader Agent 的输出都包含 `reasoning` 字段，且能在日志里确认这个字段先于结论生成
-- [ ] 任意环节出错/超时/格式不合法时，行为是拒绝/不执行，而不是放行
-- [ ] README 里能看到"未防御 vs 隔离防御"的效果对比
-- [ ] README 明确写出这是教育/研究性质的沙箱项目，不针对任何真实系统
-- [ ] 代码里能清楚定位"结构性边界"具体在哪几行实现（schema 校验 + 白名单 match 语句）
+- [x] Phase 0–4 全部通过各自验收标准（含自动化断言脚本）——共 52 条，`tests/test_phase0..4.py`
+- [x] 安全审计 Agent 和 Reader Agent 的输出都包含 `reasoning` 字段，且能在日志里确认这个字段先于结论生成——由原始 JSON 的字符偏移量判定（`ibr/observability.py` `reasoning_precedes`），`phase3_trace.py` 里显示为 `[reasoning written before verdict ✓]`
+- [x] 任意环节出错/超时/格式不合法时，行为是拒绝/不执行，而不是放行——实测验证过：DeepSeek thinking mode 拒绝 `tool_choice` 时整条流水线判 high_risk / no_action
+- [x] README 里能看到"未防御 vs 隔离防御"的效果对比——README 开头即为真实运行输出与泄露字节
+- [x] README 明确写出这是教育/研究性质的沙箱项目，不针对任何真实系统——Disclaimer 一节
+- [x] 代码里能清楚定位"结构性边界"具体在哪几行实现（schema 校验 + 白名单 match 语句）——README "Where the structural boundary actually is" 表格，行号由 `test_documentation_line_citations_still_point_at_the_right_code` 持续校验
+
+补充产出（超出原 spec）：
+
+- [x] `DEMO.md`——第 5 节四幕演示脚本，含每幕要点与常见提问
+- [x] 两条不依赖模型行为的确定性断言：AST 校验 Executor 从不读自由文本字段；被完全污染的 ReaderOutput 仍只能发出静态模板

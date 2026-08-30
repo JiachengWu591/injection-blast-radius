@@ -141,6 +141,52 @@ def test_report_flags_an_isolated_leak_as_a_defect() -> None:
     assert "defect" in terminal.lower()
 
 
+def test_documentation_line_citations_still_point_at_the_right_code() -> None:
+    """PROJECT_SPEC.md §8 wants the structural boundary locatable in the code.
+
+    README.md and DEMO.md answer that with `file.py#L123` links, which are
+    exactly the kind of thing that rots the first time somebody adds an import.
+    Check that every cited line exists, and that the four load-bearing ones
+    still contain what the docs claim they contain.
+    """
+    import re
+
+    root = Path(__file__).resolve().parents[1]
+    link_re = re.compile(r"\(([\w./]+\.py)#L(\d+)(?:-L(\d+))?\)")
+
+    checked = 0
+    for doc_name in ("README.md", "DEMO.md"):
+        doc = (root / doc_name).read_text(encoding="utf-8")
+        for match in link_re.finditer(doc):
+            rel, start, end = match.group(1), int(match.group(2)), match.group(3)
+            target = root / rel
+            assert target.is_file(), f"{doc_name} links to missing file {rel}"
+            lines = target.read_text(encoding="utf-8").splitlines()
+            last = int(end) if end else start
+            assert 1 <= start <= last <= len(lines), (
+                f"{doc_name} cites {rel}#L{start}"
+                f"{'-L' + end if end else ''} but the file has {len(lines)} lines"
+            )
+            checked += 1
+    assert checked >= 5, f"expected several code citations, found {checked}"
+
+    # The four that carry the argument, by content rather than by number.
+    anchors = {
+        ("ibr/schemas.py", 86): "def parse_audit_verdict",
+        ("ibr/schemas.py", 155): "def parse_reader_output",
+        ("ibr/executor.py", 33): "COMMENT_TEMPLATES",
+        ("ibr/executor.py", 98): "if action not in SUGGESTED_ACTIONS",
+        ("ibr/executor.py", 104): "match action:",
+        ("ibr/pipeline.py", 328): "The structured boundary",
+        ("ibr/baseline_agent.py", 149): "def _post_comment_impl",
+    }
+    for (rel, line_no), expected in anchors.items():
+        line = (root / rel).read_text(encoding="utf-8").splitlines()[line_no - 1]
+        assert expected in line, (
+            f"{rel}:{line_no} should contain {expected!r} but contains {line.strip()!r}"
+        )
+
+
 def test_terminal_table_lists_every_scenario() -> None:
     outcomes = _fake_outcomes()
     table = render_terminal(outcomes)
