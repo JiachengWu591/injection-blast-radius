@@ -144,18 +144,26 @@ def render_terminal(comparison: Comparison) -> str:
 
     # Per-subject, so a reader can see whether the same payloads are hard for
     # every model or whether the difficulty moves around.
+    subjects = comparison.models[0].corpus.subjects
+    name_w = max((len(s.name) for s in subjects), default=20) + 1
+    cell_w = max(
+        [len(s.spread) for r in comparison.models for s in r.corpus.subjects]
+        + [len(r.model) for r in comparison.models],
+        default=20,
+    ) + 2
+
     lines.append("")
     lines.append("Per-subject verdict spread:")
-    header = f"  {'subject':<34}"
+    header = f"  {'subject':<{name_w}}"
     for result in comparison.models:
-        header += f" {result.model:<28}"
+        header += f" {result.model:<{cell_w}}"
     lines.append(header)
-    for index, subject in enumerate(comparison.models[0].corpus.subjects):
-        row = f"  {subject.name:<34}"
+    for index, subject in enumerate(subjects):
+        row = f"  {subject.name:<{name_w}}"
         for result in comparison.models:
             other = result.corpus.subjects[index]
             mark = " " if other.unanimous else "!"
-            row += f" {mark}{other.spread:<27}"
+            row += f" {mark}{other.spread:<{cell_w - 1}}"
         lines.append(row)
 
     if len(comparison.models) >= 2:

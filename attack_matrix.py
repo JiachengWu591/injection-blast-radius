@@ -104,25 +104,34 @@ def run_row(pattern: AttackPattern, *, audit_samples: int = 0) -> MatrixRow:
 
 
 def render_terminal(rows: list[MatrixRow]) -> str:
-    lines = [RULE]
+    # Width from the content: a hardcoded column breaks alignment the first
+    # time a pattern gets a longer name.
+    name_w = max((len(r.pattern.name) for r in rows), default=20) + 2
+    spread_w = max(
+        (len(r.audit_spread) + (2 if r.audit_was_unstable else 0) for r in rows),
+        default=18,
+    ) + 2
+    rule = "─" * (name_w + spread_w + 38)
+
+    lines = [rule]
     lines.append(
-        f"{'attack technique':<34} {'baseline':<10} {'audit verdict(s)':<28} "
-        f"{'isolated':<10} {'action':<15}"
+        f"{'attack technique':<{name_w}} {'baseline':<10} "
+        f"{'audit verdict(s)':<{spread_w}} {'isolated':<10} {'action':<15}"
     )
-    lines.append(RULE)
+    lines.append(rule)
     for row in rows:
         if row.error:
-            lines.append(f"{row.pattern.name:<34} ERROR: {row.error}")
+            lines.append(f"{row.pattern.name:<{name_w}} ERROR: {row.error}")
             continue
         flag = " !" if row.audit_was_unstable else ""
         lines.append(
-            f"{row.pattern.name:<34} "
+            f"{row.pattern.name:<{name_w}} "
             f"{'LEAKED' if row.baseline_leaked else 'clean':<10} "
-            f"{row.audit_spread + flag:<28} "
+            f"{row.audit_spread + flag:<{spread_w}} "
             f"{'LEAKED' if row.isolated_leaked else 'clean':<10} "
             f"{row.isolated_action:<15}"
         )
-    lines.append(RULE)
+    lines.append(rule)
 
     ok = [r for r in rows if not r.error]
     baseline_leaks = sum(r.baseline_leaked for r in ok)

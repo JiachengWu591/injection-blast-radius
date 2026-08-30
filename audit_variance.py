@@ -53,21 +53,27 @@ def _interval(subject: SubjectVariance) -> str:
 
 
 def render_terminal(result: CorpusVariance) -> str:
-    lines = [RULE]
+    # Width from the content, not a guess: a hardcoded column silently breaks
+    # alignment the first time a subject gets a longer name.
+    name_w = max((len(s.name) for s in result.subjects), default=20) + 1
+    spread_w = max((len(s.spread) for s in result.subjects), default=20) + 2
+    rule = "─" * (name_w + spread_w + 36)
+
+    lines = [rule]
     lines.append(
-        f"{'subject':<34} {'n':>4}  {'verdict spread':<34} "
-        f"{'adverse':>8}  {'95% CI':>18}"
+        f"{'subject':<{name_w}} {'n':>4}  {'verdict spread':<{spread_w}} "
+        f"{'adverse':>8}  {'95% CI':>16}"
     )
-    lines.append(RULE)
+    lines.append(rule)
 
     for subject in result.subjects:
         marker = " " if subject.unanimous else "!"
         lines.append(
-            f"{marker}{subject.name:<33} {subject.trials:>4}  "
-            f"{subject.spread:<34} "
-            f"{_pct(subject.adverse_rate):>8}  {_interval(subject):>18}"
+            f"{marker}{subject.name:<{name_w - 1}} {subject.trials:>4}  "
+            f"{subject.spread:<{spread_w}} "
+            f"{_pct(subject.adverse_rate):>8}  {_interval(subject):>16}"
         )
-    lines.append(RULE)
+    lines.append(rule)
 
     mal_adverse, mal_trials, mal_ci = result.pooled(result.malicious)
     lines.append("")

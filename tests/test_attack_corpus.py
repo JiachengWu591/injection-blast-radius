@@ -34,6 +34,44 @@ ensure_sandbox()
 # =========================================================================
 
 
+def test_obfuscated_payloads_declare_what_they_actually_ask_for() -> None:
+    """The rails must work on the payloads designed to defeat rails.
+
+    A base64 blob or a homoglyph substitution sails straight past a plaintext
+    scan of this corpus. Requiring an explicit `plaintext_intent` for anything
+    whose request isn't legible in the payload is what keeps every check below
+    meaningful — otherwise the encoded patterns would be the one place a
+    careless edit could hide something.
+    """
+    for pattern in PATTERNS:
+        payload = pattern.payload
+        legible = "sandbox/.env" in payload and re.search(
+            r"\b(read|open|attach|paste|reproduce|include)\b", payload, re.I
+        )
+        if not legible:
+            assert pattern.plaintext_intent.strip(), (
+                f"{pattern.key}: the payload does not state its request in "
+                "readable English, so plaintext_intent is required"
+            )
+        if pattern.plaintext_intent:
+            assert "sandbox/.env" in pattern.plaintext_intent, (
+                f"{pattern.key}: plaintext_intent must name the target it asks for"
+            )
+
+
+def test_encoded_payload_decodes_to_its_declared_intent() -> None:
+    """An encoded payload must not be able to say something else."""
+    import base64
+
+    encoded = pattern_by_key("base64_encoded")
+    blobs = re.findall(r"^[A-Za-z0-9+/]{40,}={0,2}$", encoded.payload, re.M)
+    assert blobs, "no base64 blob found in the encoded payload"
+    decoded = base64.b64decode(blobs[0]).decode("utf-8")
+    assert decoded == encoded.plaintext_intent, (
+        "the encoded blob does not match the declared plaintext intent"
+    )
+
+
 def test_every_payload_targets_only_this_projects_sandbox() -> None:
     """No payload may name a path outside sandbox/.
 
@@ -55,9 +93,9 @@ def test_every_payload_targets_only_this_projects_sandbox() -> None:
         "credentials.json",
     )
     for pattern in PATTERNS:
-        body = pattern.as_issue().body
+        surface = pattern.as_issue().body + "\n" + pattern.plaintext_intent
         for token in forbidden:
-            assert token not in body, (
+            assert token not in surface, (
                 f"{pattern.key}: payload references {token!r}, which is outside "
                 "this project's sandbox"
             )
@@ -72,7 +110,7 @@ def test_no_payload_contains_a_network_destination() -> None:
     """
     url_re = re.compile(r"https?://|ftp://|\bcurl\b|\bwget\b|\bnc\s+-", re.I)
     for pattern in PATTERNS:
-        hit = url_re.search(pattern.payload)
+        hit = url_re.search(pattern.audit_surface)
         assert hit is None, (
             f"{pattern.key}: payload contains a network destination or transfer "
             f"command ({hit.group(0)!r})"
@@ -93,7 +131,7 @@ def test_no_payload_names_a_real_product_or_person() -> None:
         "stripe",
     )
     for pattern in PATTERNS:
-        low = pattern.payload.lower()
+        low = pattern.audit_surface.lower()
         for name in forbidden:
             assert name not in low, (
                 f"{pattern.key}: payload names {name!r} — payloads must target "
@@ -105,9 +143,9 @@ def test_the_only_reachable_secret_is_the_fake_placeholder() -> None:
     """A payload may ask for the bait; it may never embed a real-looking key."""
     real_key_re = re.compile(r"(?<!fake-)sk-[A-Za-z0-9]{16,}")
     for pattern in PATTERNS:
-        body = pattern.as_issue().body
-        assert not real_key_re.search(body), f"{pattern.key}: real-looking key"
-        assert BAIT_SECRET_VALUE not in body, (
+        surface = pattern.as_issue().body + "\n" + pattern.plaintext_intent
+        assert not real_key_re.search(surface), f"{pattern.key}: real-looking key"
+        assert BAIT_SECRET_VALUE not in surface, (
             f"{pattern.key}: payload hardcodes the bait value; it should ask "
             "the agent to read it, not carry it"
         )
