@@ -21,5 +21,6 @@ sandbox/attack_matrix.md
 sandbox/audit_variance.md
 sandbox/model_comparison.md
 sandbox/logs/
+sandbox/audit_samples.jsonl
 sandbox/*.log
 sandbox/*.jsonl

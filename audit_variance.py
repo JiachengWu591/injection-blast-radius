@@ -13,11 +13,17 @@ checked by assertions that make no API calls. Those are different kinds of
 claim, and treating the first as if it were the second is the mistake this
 whole project argues against.
 
+Samples are checkpointed to sandbox/logs/audit_samples.jsonl as they arrive, so
+a large run survives an interruption and n accumulates across sessions: asking
+for 200 when 50 are already stored costs 150 calls, not 200. Pass `--fresh` to
+ignore the store.
+
 Usage:
     python audit_variance.py
-    python audit_variance.py --samples 40 --concurrency 8
+    python audit_variance.py --samples 200 --concurrency 16
     python audit_variance.py --only fake_convention,split_instruction
-    python audit_variance.py --no-benign
+    python audit_variance.py --model deepseek-v4-pro
+    python audit_variance.py --fresh --no-benign
 """
 
 from __future__ import annotations
@@ -28,18 +34,20 @@ import sys
 from ibr import sandbox_fs
 from ibr.attack_corpus import PATTERNS, pattern_by_key
 from ibr.bootstrap import ensure_sandbox
-from ibr.config import SANDBOX_ROOT
+from ibr.config import AUDIT_MODEL, LOG_DIR, SANDBOX_ROOT
 from ibr.issues import load_issue
 from ibr.llm import build_client
 from ibr.variance import (
     DEFAULT_CONCURRENCY,
     DEFAULT_SAMPLES,
     CorpusVariance,
+    SampleStore,
     SubjectVariance,
     measure_subject,
 )
 
 VARIANCE_REPORT_PATH = SANDBOX_ROOT / "audit_variance.md"
+SAMPLE_STORE_PATH = LOG_DIR / "audit_samples.jsonl"
 RULE = "─" * 100
 
 
@@ -265,6 +273,19 @@ def main() -> int:
         action="store_true",
         help="skip writing sandbox/audit_variance.md",
     )
+    parser.add_argument(
+        "--model",
+        default=AUDIT_MODEL,
+        help=f"model behind the audit (default {AUDIT_MODEL})",
+    )
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help=(
+            "ignore previously stored samples and take every one anew "
+            "(default: reuse the store and only request the shortfall)"
+        ),
+    )
     args = parser.parse_args()
 
     if args.samples < 1:
@@ -281,7 +302,7 @@ def main() -> int:
         patterns = list(PATTERNS)
 
     ensure_sandbox()
-    client = build_client()
+    client = build_client(timeout=120.0)
     result = CorpusVariance(samples_requested=args.samples)
 
     subjects: list[tuple[str, str, bool, object]] = [
@@ -292,14 +313,20 @@ def main() -> int:
             ("benign_control", "Benign bug report (control)", False, load_issue("benign"))
         )
 
-    total_calls = len(subjects) * args.samples
+    store = None if args.fresh else SampleStore(SAMPLE_STORE_PATH)
+    if store is not None and store.total():
+        print(f"Sample store: {SAMPLE_STORE_PATH} ({store.total()} verdicts held)")
+
     print(
-        f"Sampling the audit {args.samples}× on {len(subjects)} subject(s) "
-        f"= {total_calls} calls, {args.concurrency} at a time…\n"
+        f"Target n={args.samples} on {len(subjects)} subject(s) via "
+        f"{args.model}, {args.concurrency} calls at a time…\n"
     )
 
     for index, (key, name, is_malicious, issue) in enumerate(subjects, 1):
-        print(f"  [{index}/{len(subjects)}] {name}…", flush=True)
+        def announce(reused: int, todo: int, *, _name: str = name, _i: int = index) -> None:
+            detail = f"{todo} new" if not reused else f"{reused} reused, {todo} new"
+            print(f"  [{_i}/{len(subjects)}] {_name} — {detail}…", flush=True)
+
         result.subjects.append(
             measure_subject(
                 key,
@@ -309,6 +336,9 @@ def main() -> int:
                 samples=args.samples,
                 concurrency=args.concurrency,
                 client=client,
+                audit_model=args.model,
+                store=store,
+                progress=announce,
             )
         )
 

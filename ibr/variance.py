@@ -26,10 +26,14 @@ the probability scale and understates uncertainty at small n.
 
 from __future__ import annotations
 
+import json
 import math
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from pathlib import Path
+from threading import Lock
+from typing import Callable
 
 import openai
 
@@ -138,6 +142,8 @@ class SubjectVariance:
     is_malicious: bool
     verdicts: list[str] = field(default_factory=list)
     errors: int = 0
+    reused: int = 0
+    """How many verdicts came from the sample store rather than fresh calls."""
 
     @property
     def trials(self) -> int:
@@ -216,6 +222,71 @@ class CorpusVariance:
         return [s for s in self.subjects if s.trials > 1 and not s.unanimous]
 
 
+class SampleStore:
+    """Append-only JSONL record of every audit sample ever taken.
+
+    Narrowing an interval means multiplying n, and at n=200 across a dozen
+    subjects a run is thousands of calls and tens of minutes. Losing that to a
+    dropped connection halfway through is not an acceptable failure mode, and
+    neither is being unable to add samples later without starting over. Every
+    verdict is written as it arrives, so a run is resumable and n accumulates
+    across sessions.
+
+    Verdicts are keyed by (model, subject) and nothing else. That is a real
+    assumption worth stating: it treats samples taken on different days as
+    exchangeable, which they are not if the provider changes the model behind a
+    stable id. The alternative — discarding history on any doubt — would make
+    large n unreachable, so the trade is deliberate and the report notes it.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._lock = Lock()
+        self._samples: dict[tuple[str, str], list[str]] = {}
+        self._load()
+
+    def _load(self) -> None:
+        if not self.path.exists():
+            return
+        with self.path.open("r", encoding="utf-8") as handle:
+            for number, line in enumerate(handle, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                    key = (record["model"], record["subject"])
+                    verdict = record["verdict"]
+                except (json.JSONDecodeError, KeyError) as exc:
+                    raise ValueError(
+                        f"{self.path}: line {number} is not a valid sample: {exc}"
+                    ) from exc
+                if verdict not in RISK_LEVELS:
+                    raise ValueError(
+                        f"{self.path}: line {number} has unknown verdict {verdict!r}"
+                    )
+                self._samples.setdefault(key, []).append(verdict)
+
+    def existing(self, model: str, subject: str) -> list[str]:
+        return list(self._samples.get((model, subject), []))
+
+    def record(self, model: str, subject: str, verdict: str) -> None:
+        with self._lock:
+            self._samples.setdefault((model, subject), []).append(verdict)
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(
+                    json.dumps(
+                        {"model": model, "subject": subject, "verdict": verdict},
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+
+    def total(self) -> int:
+        return sum(len(v) for v in self._samples.values())
+
+
 def measure_subject(
     key: str,
     name: str,
@@ -226,26 +297,43 @@ def measure_subject(
     concurrency: int = DEFAULT_CONCURRENCY,
     client: openai.OpenAI | None = None,
     audit_model: str = AUDIT_MODEL,
+    store: SampleStore | None = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> SubjectVariance:
-    """Call the audit `samples` times on one fixed input.
+    """Sample the audit on one fixed input until it has `samples` verdicts.
 
     Concurrent because the calls are independent and sequential sampling makes
-    a 20-sample run take long enough that people reach for a smaller n — which
-    is the wrong thing to economise on when the whole point is the interval
-    width.
+    a large run slow enough that people reach for a smaller n — which is the
+    wrong thing to economise on when interval width is the whole point.
+
+    With a `store`, already-recorded verdicts count toward the target and only
+    the shortfall is requested.
     """
     result = SubjectVariance(key=key, name=name, is_malicious=is_malicious)
 
+    if store is not None:
+        result.verdicts.extend(store.existing(audit_model, key)[:samples])
+    result.reused = len(result.verdicts)
+
+    shortfall = max(0, samples - len(result.verdicts))
+    if progress:
+        progress(result.reused, shortfall)
+    if shortfall == 0:
+        return result
+
     def one(_index: int) -> str | None:
         try:
-            return audit_only(
+            verdict = audit_only(
                 issue, client=client, audit_model=audit_model
             ).risk_level
         except openai.APIError:
             return None
+        if store is not None:
+            store.record(audit_model, key, verdict)
+        return verdict
 
     with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
-        for verdict in pool.map(one, range(samples)):
+        for verdict in pool.map(one, range(shortfall)):
             if verdict is None:
                 result.errors += 1
             else:

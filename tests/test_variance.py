@@ -257,6 +257,142 @@ def test_terminal_table_reports_intervals_for_every_subject() -> None:
 
 
 # =========================================================================
+# Sample store.
+# =========================================================================
+
+
+def test_sample_store_round_trips_and_accumulates() -> None:
+    import tempfile
+    from pathlib import Path as _Path
+
+    from ibr.variance import SampleStore
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _Path(tmp) / "samples.jsonl"
+        store = SampleStore(path)
+        assert store.total() == 0
+        assert store.existing("m", "s") == []
+
+        store.record("m", "s", "high_risk")
+        store.record("m", "s", "suspicious")
+        store.record("m", "other", "safe")
+        store.record("other-model", "s", "high_risk")
+
+        assert store.total() == 4
+        assert store.existing("m", "s") == ["high_risk", "suspicious"]
+        assert store.existing("m", "other") == ["safe"]
+
+        # A second store over the same file must see everything.
+        reopened = SampleStore(path)
+        assert reopened.total() == 4
+        assert reopened.existing("m", "s") == ["high_risk", "suspicious"]
+        # Keys are per (model, subject) — samples must not bleed across models.
+        assert reopened.existing("other-model", "s") == ["high_risk"]
+
+
+def test_sample_store_rejects_a_corrupt_file() -> None:
+    """Fail-closed: silently dropping samples would distort the denominator."""
+    import tempfile
+    from pathlib import Path as _Path
+
+    from ibr.variance import SampleStore
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _Path(tmp) / "samples.jsonl"
+        path.write_text(
+            '{"model": "m", "subject": "s", "verdict": "high_risk"}\n'
+            "not json at all\n",
+            encoding="utf-8",
+        )
+        try:
+            SampleStore(path)
+        except ValueError as exc:
+            assert "line 2" in str(exc)
+        else:
+            raise AssertionError("a corrupt sample line was accepted")
+
+
+def test_sample_store_rejects_an_unknown_verdict() -> None:
+    import tempfile
+    from pathlib import Path as _Path
+
+    from ibr.variance import SampleStore
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _Path(tmp) / "samples.jsonl"
+        path.write_text(
+            '{"model": "m", "subject": "s", "verdict": "totally_fine"}\n',
+            encoding="utf-8",
+        )
+        try:
+            SampleStore(path)
+        except ValueError as exc:
+            assert "unknown verdict" in str(exc)
+        else:
+            raise AssertionError("an unknown verdict was accepted")
+
+
+def test_measure_subject_reuses_stored_samples_without_calling_out() -> None:
+    """The resumability guarantee, checked without touching the network.
+
+    If this regressed, a resumed run would silently re-bill every sample it
+    already had — the failure would be invisible except on the invoice.
+    """
+    import tempfile
+    from pathlib import Path as _Path
+
+    from ibr.issues import Issue
+    from ibr.variance import SampleStore, measure_subject
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _Path(tmp) / "samples.jsonl"
+        store = SampleStore(path)
+        for _ in range(5):
+            store.record("test-model", "subj", "high_risk")
+
+        issue = Issue(issue_id="x", title="t", author="a", body="b")
+        # No client and no network: if it tried to call out, this would raise.
+        result = measure_subject(
+            "subj",
+            "Subject",
+            issue,
+            is_malicious=True,
+            samples=5,
+            audit_model="test-model",
+            store=store,
+        )
+        assert result.trials == 5
+        assert result.reused == 5
+        assert result.errors == 0
+        assert result.verdicts == ["high_risk"] * 5
+
+
+def test_measure_subject_caps_reuse_at_the_requested_n() -> None:
+    """Asking for fewer samples than are stored must not inflate n."""
+    import tempfile
+    from pathlib import Path as _Path
+
+    from ibr.issues import Issue
+    from ibr.variance import SampleStore, measure_subject
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = SampleStore(_Path(tmp) / "samples.jsonl")
+        for _ in range(10):
+            store.record("test-model", "subj", "high_risk")
+
+        result = measure_subject(
+            "subj",
+            "Subject",
+            Issue(issue_id="x", title="t", author="a", body="b"),
+            is_malicious=True,
+            samples=4,
+            audit_model="test-model",
+            store=store,
+        )
+        assert result.trials == 4, "stored samples beyond the target leaked into n"
+
+
+# =========================================================================
 # Cross-model reporting honesty.
 # =========================================================================
 
