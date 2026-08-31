@@ -154,8 +154,17 @@ def test_documentation_line_citations_still_point_at_the_right_code() -> None:
     root = Path(__file__).resolve().parents[1]
     link_re = re.compile(r"\(([\w./]+\.py)#L(\d+)(?:-L(\d+))?\)")
 
+    # Translations carry the same citations, so they rot the same way. Scanned
+    # by glob rather than a fixed list: a future README.ja.md that nobody
+    # remembered to add here would be exactly the file whose links go stale
+    # unnoticed.
+    docs = sorted(
+        p.name for p in root.glob("*.md") if p.name not in {"LICENSE.md"}
+    )
+    assert "README.zh-CN.md" in docs, "the Chinese README is not being checked"
+
     checked = 0
-    for doc_name in ("README.md", "DEMO.md"):
+    for doc_name in docs:
         doc = (root / doc_name).read_text(encoding="utf-8")
         for match in link_re.finditer(doc):
             rel, start, end = match.group(1), int(match.group(2)), match.group(3)
@@ -184,6 +193,61 @@ def test_documentation_line_citations_still_point_at_the_right_code() -> None:
         line = (root / rel).read_text(encoding="utf-8").splitlines()[line_no - 1]
         assert expected in line, (
             f"{rel}:{line_no} should contain {expected!r} but contains {line.strip()!r}"
+        )
+
+
+def test_the_translations_report_the_same_numbers() -> None:
+    """A translation rots by having one side's figures updated and not the other.
+
+    Prose can and should differ between languages. The measurements cannot:
+    two READMEs quoting different miss rates would mean at least one of them is
+    lying about a real run, and the reader has no way to tell which. Checked by
+    comparing the distinctive numeric claims rather than the text, since that
+    is the part that must not diverge.
+    """
+    import re
+
+    root = Path(__file__).resolve().parents[1]
+    pairs = [("README.md", "README.zh-CN.md"), ("DEMO.md", "DEMO.zh-CN.md")]
+
+    # Figures that carry meaning: rates, counts, and interval bounds.
+    measurement = re.compile(
+        r"\b\d+/\d+\b"  # 10/2395, 8/200
+        r"|\b\d+\.\d+%"  # 4.0%, 0.09%
+        r"|\b\d{1,3}(?:,\d{3})+\b"  # 2,600  1,366
+        r"|n=\d+"  # n=200
+    )
+
+    for english_name, translated_name in pairs:
+        english = (root / english_name).read_text(encoding="utf-8")
+        translated = (root / translated_name).read_text(encoding="utf-8")
+
+        # Commands and terminal output must match; the inline comments beside
+        # a command are prose and should be localised. Only comments set off
+        # by two or more spaces are stripped, so a `#` inside recorded output
+        # ("comment on issue #malicious") is left alone.
+        def _commands_only(text: str) -> list[str]:
+            blocks = re.findall(r"```[a-z]*\n(.*?)```", text, re.S)
+            return [re.sub(r"[ \t]{2,}#.*$", "", b, flags=re.M).rstrip() for b in blocks]
+
+        english_blocks = _commands_only(english)
+        translated_blocks = _commands_only(translated)
+        assert english_blocks and translated_blocks
+        assert english_blocks == translated_blocks, (
+            f"{translated_name}: a command or a line of terminal output "
+            f"differs from {english_name}. Comments beside a command may be "
+            "translated; what the reader is told to run, and what they are "
+            "shown as the result, may not differ between languages."
+        )
+
+        english_numbers = sorted(set(measurement.findall(english)))
+        translated_numbers = sorted(set(measurement.findall(translated)))
+        only_english = set(english_numbers) - set(translated_numbers)
+        only_translated = set(translated_numbers) - set(english_numbers)
+        assert not only_english and not only_translated, (
+            f"{english_name} and {translated_name} disagree on measurements. "
+            f"only in {english_name}: {sorted(only_english)}; "
+            f"only in {translated_name}: {sorted(only_translated)}"
         )
 
 

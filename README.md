@@ -1,5 +1,7 @@
 # injection-blast-radius
 
+*English · [简体中文](./README.zh-CN.md)*
+
 > Reproduces a real 2026 indirect prompt-injection attack class targeting coding agents, and demonstrates why **architectural isolation — not prompt-level filtering — is the one defense layer that doesn't degrade as attacks get smarter.**
 
 ![Side by side: an undefended agent publishes a placeholder secret into the simulated public comment file; the isolated pipeline, given the identical input and with its security audit deliberately bypassed, publishes nothing.](assets/comparison.svg)
@@ -214,8 +216,8 @@ perfect hit rate.
 
 The first n=200 run was taken with that bug live, and the five failures here
 prove the path was reachable rather than theoretical. The headline barely moved
-(0.375% → 0.418%) because five out of 2,400 is small — but the bias only ever
-points one way, and nothing bounded how large it could get.
+(0.375% → 0.418%) because 5/2400 is small — but the bias only ever points one
+way, and nothing bounded how large it could get.
 `AuditVerdict.completed` now separates "the model said high_risk" from "we could
 not reach the model", and four assertions in
 [`tests/test_variance.py`](tests/test_variance.py) pin it — including one
@@ -409,7 +411,7 @@ Other entry points:
 | `python phase3_trace.py --run all` | Render the stage-by-stage trace tree |
 | `python attack_matrix.py` | Run twelve injection techniques against both architectures |
 | `python audit_variance.py --samples 200` | Measure the audit's hit rate with confidence intervals |
-| `python model_comparison.py` | Ask whether a stronger model screens better (400 calls) |
+| `python model_comparison.py` | Ask whether a stronger model screens better (650 calls) |
 | `python tools/make_comparison_svg.py` | Regenerate the figure above from a fresh run |
 | `python tests/test_phase2.py --offline` | Structural assertions, no API calls needed |
 | `python verify.py` | Every pre-push check in one command (~25s, no API key) |

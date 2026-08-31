@@ -1,5 +1,7 @@
 # Demo script
 
+*English · [简体中文](./DEMO.zh-CN.md)*
+
 Four scenes, roughly ten minutes. Each one is a command you actually run, plus
 the point it exists to make. PROJECT_SPEC.md §5 is the source for this
 structure.
