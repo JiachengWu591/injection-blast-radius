@@ -283,6 +283,100 @@ def test_figure_panes_report_outcomes_honestly() -> None:
     assert "audit was skipped" in held_text
 
 
+def test_report_renders_a_failed_run_without_inventing_a_mechanism() -> None:
+    """An errored scenario must say so and stop, not explain what happened.
+
+    This branch had never executed. A report that filled in a mechanism
+    sentence for a run that never completed would be describing something that
+    did not occur — the same failure mode as counting a timeout as a detection,
+    in the prose a reader is most likely to quote.
+    """
+    by_key = {s.key: s for s in SCENARIOS}
+    broken = Outcome(
+        scenario=by_key["baseline_malicious"],
+        error="APITimeoutError: Request timed out.",
+        mechanism="(should not be shown)",
+        notes=["a note that should not appear either"],
+    )
+    markdown = render_markdown([broken])
+
+    assert "Run failed" in markdown
+    assert "APITimeoutError" in markdown
+    assert "(should not be shown)" not in markdown, (
+        "the report explained a run that never completed"
+    )
+    assert "a note that should not appear either" not in markdown
+    assert "Nothing was published" not in markdown
+
+    terminal = render_terminal([broken])
+    assert "error" in terminal
+
+
+def test_report_states_when_both_architectures_took_the_same_action() -> None:
+    """The parity branch nobody had exercised."""
+    by_key = {s.key: s for s in SCENARIOS}
+    same = [
+        Outcome(
+            scenario=by_key["baseline_benign"],
+            action="reply_comment",
+            mechanism="baseline replied",
+        ),
+        Outcome(
+            scenario=by_key["isolated_benign"],
+            action="reply_comment",
+            mechanism="isolated replied",
+        ),
+    ]
+    markdown = render_markdown(same)
+    start = markdown.index("Did the defense cost the feature?")
+    section = markdown[start : markdown.index("## Reading the result", start)]
+    assert "took the same action on benign input" in section
+    assert "did not cost the feature" in section
+    assert "not the same action" not in section
+    assert "functionality regression" not in section
+
+
+def test_report_flags_a_benign_regression_as_a_regression() -> None:
+    """If isolation drops a legitimate issue, that must not read as success."""
+    by_key = {s.key: s for s in SCENARIOS}
+    dropped = [
+        Outcome(
+            scenario=by_key["baseline_benign"],
+            action="posted_comment",
+            mechanism="baseline replied",
+        ),
+        Outcome(
+            scenario=by_key["isolated_benign"],
+            action="no_action",
+            mechanism="isolated did nothing",
+        ),
+    ]
+    markdown = render_markdown(dropped)
+    assert "took no action on benign input" in markdown
+    assert "functionality regression" in markdown
+    # Scoped to the parity section: the phrase "did not cost the feature" also
+    # appears in the fixed narrative elsewhere, so a whole-document check would
+    # be asserting the wrong thing.
+    start = markdown.index("Did the defense cost the feature?")
+    section = markdown[start : markdown.index("## Reading the result", start)]
+    assert "did not cost the feature" not in section
+    assert "took the same action" not in section
+
+
+def test_report_shows_notes_on_a_successful_run() -> None:
+    by_key = {s.key: s for s in SCENARIOS}
+    noted = Outcome(
+        scenario=by_key["baseline_malicious"],
+        action="posted_comment",
+        mechanism="the agent published its own prose",
+        notes=["leaked on attempt 2 of 3 — compliance is probabilistic"],
+        published="a reply",
+        public_surface="a reply",
+    )
+    markdown = render_markdown([noted])
+    assert "leaked on attempt 2 of 3" in markdown
+
+
 def test_terminal_table_lists_every_scenario() -> None:
     outcomes = _fake_outcomes()
     table = render_terminal(outcomes)

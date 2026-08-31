@@ -122,15 +122,22 @@ def required_samples_per_group(
     newer model is compatible with no improvement at all.
 
     Normal-approximation sample size, which is crude at rates this small —
-    treat the result as an order of magnitude, not a target. Returns None when
-    the two rates are equal, since no sample size distinguishes them.
+    treat the result as an order of magnitude, not a target. Returns None only
+    when the two rates are equal, since no sample size distinguishes those.
     """
     delta = abs(rate_a - rate_b)
     if delta < 1e-12:
         return None
+
     variance = rate_a * (1.0 - rate_a) + rate_b * (1.0 - rate_b)
     if variance <= 0.0:
-        return None
+        # Zero variance with a non-zero difference means both rates sit exactly
+        # at 0 or 1 — the *most* separable pair there is. Returning None here
+        # would have the report say "no sample size would separate them" about
+        # 0% versus 100%, which is precisely backwards. One observation per
+        # group settles it, so report that rather than an impossibility.
+        return 1
+
     return math.ceil(((z_alpha + z_power) ** 2) * variance / (delta * delta))
 
 

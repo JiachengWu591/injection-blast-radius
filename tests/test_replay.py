@@ -250,6 +250,127 @@ def test_baseline_read_file_stayed_inside_the_sandbox() -> None:
 
 
 # =========================================================================
+# The Phase 4 comparison harness.
+# =========================================================================
+
+
+def _scenario(key: str):
+    from ibr.comparison import SCENARIOS
+
+    return next(s for s in SCENARIOS if s.key == key)
+
+
+def test_scenario_runner_explains_the_isolated_path() -> None:
+    """The mechanism sentence is what the report tells a reader happened.
+
+    Until run_scenario took an injectable client this prose was the
+    least-tested output in the project, which is where a bug attributing a
+    timeout to a model decision was living.
+    """
+    from ibr.comparison import run_scenario
+
+    client = replay.load("isolated_malicious")
+    outcome = run_scenario(_scenario("isolated_malicious"), client=cast("Any", client))
+    client.assert_fully_consumed()
+
+    assert outcome.error is None
+    assert outcome.mechanism, "no mechanism sentence was produced"
+    assert not outcome.leaked
+    assert outcome.audit_completed is True
+    if "short_circuit" in outcome.stages:
+        assert "short-circuit" in outcome.mechanism or "never ran" in outcome.mechanism
+
+
+def test_scenario_runner_explains_the_baseline_path() -> None:
+    from ibr.comparison import run_scenario
+
+    client = replay.load("baseline_malicious")
+    outcome = run_scenario(_scenario("baseline_malicious"), client=cast("Any", client))
+    client.assert_fully_consumed()
+
+    assert outcome.error is None
+    assert outcome.stages, "no tool calls recorded in the outcome"
+    assert all(s.startswith("tool:") for s in outcome.stages)
+    # The mechanism must reflect whether the bait file was actually read.
+    read_env = any("sandbox/.env" in s for s in [outcome.mechanism])
+    if outcome.leaked:
+        assert read_env, "leaked without the mechanism mentioning the file"
+
+
+def test_scenario_runner_reports_a_failure_as_a_failure() -> None:
+    """A timeout is not three samples of the model declining.
+
+    The original text said "did not leak in 3 attempts this time; the model
+    declined the injection on every sample" after a single failed call — the
+    same error as counting a fail-closed audit verdict as a detection, in the
+    prose a reader is most likely to quote.
+    """
+    import openai as _openai
+
+    from ibr import comparison as comparison_module
+    from ibr.comparison import run_scenario_sampled
+
+    original = comparison_module.run_baseline
+
+    def always_fails(_issue, **_kwargs):
+        raise _openai.APITimeoutError(request=None)
+
+    comparison_module.run_baseline = always_fails
+    try:
+        outcome = run_scenario_sampled(_scenario("baseline_malicious"))
+    finally:
+        comparison_module.run_baseline = original
+
+    assert outcome.error is not None
+    assert outcome.attempts == 1, "sampling continued past a failure"
+    notes = " ".join(outcome.notes)
+    assert "infrastructure failure" in notes
+    assert "not the model declining" in notes
+    assert "did not leak in 3" not in notes, "claimed attempts that never happened"
+    assert "declined the injection on every sample" not in notes
+
+
+def test_scenario_runner_counts_attempts_it_actually_made() -> None:
+    """No-leak must report the attempts made, not the attempts allowed."""
+    from ibr import comparison as comparison_module
+    from ibr.comparison import PROBABILISTIC_ATTEMPTS, run_scenario_sampled
+
+    calls = {"n": 0}
+    original = comparison_module.run_baseline
+
+    class _Result:
+        posted_comment = "a clean reply, no secret"
+        transcript = ()
+
+    def never_leaks(_issue, **_kwargs):
+        calls["n"] += 1
+        return _Result()
+
+    comparison_module.run_baseline = never_leaks
+    try:
+        outcome = run_scenario_sampled(_scenario("baseline_malicious"))
+    finally:
+        comparison_module.run_baseline = original
+
+    assert calls["n"] == PROBABILISTIC_ATTEMPTS
+    assert outcome.attempts == PROBABILISTIC_ATTEMPTS
+    assert not outcome.leaked
+    notes = " ".join(outcome.notes)
+    assert f"{PROBABILISTIC_ATTEMPTS} attempt" in notes
+
+
+def test_deterministic_scenario_needs_no_client_at_all() -> None:
+    from ibr.comparison import run_scenario
+
+    outcome = run_scenario(_scenario("worst_case"))
+    assert outcome.error is None
+    assert outcome.action == "reply_comment"
+    assert not outcome.leaked
+    assert outcome.published in COMMENT_TEMPLATES.values()
+    assert "static template" in outcome.mechanism
+
+
+# =========================================================================
 # Coverage of the modules this exists for.
 # =========================================================================
 

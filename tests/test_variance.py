@@ -119,9 +119,36 @@ def test_required_samples_grows_as_the_difference_shrinks() -> None:
     assert 1_000 < small < 100_000
 
 
-def test_required_samples_is_undefined_for_equal_rates() -> None:
+def test_required_samples_is_undefined_only_for_equal_rates() -> None:
     assert required_samples_per_group(0.02, 0.02) is None
     assert required_samples_per_group(0.0, 0.0) is None
+    assert required_samples_per_group(1.0, 1.0) is None
+
+
+def test_required_samples_handles_the_maximally_separable_pair() -> None:
+    """0% versus 100% is the easiest comparison there is, not the hardest.
+
+    Both rates sitting at the ends of the scale makes the pooled variance zero,
+    and a guard that returned None on zero variance therefore reported "no
+    sample size would separate them" about the most separable pair possible —
+    exactly backwards, in a sentence the report quotes verbatim.
+    """
+    for a, b in ((0.0, 1.0), (1.0, 0.0)):
+        needed = required_samples_per_group(a, b)
+        assert needed is not None, f"req({a}, {b}) claimed to be impossible"
+        assert needed == 1, f"req({a}, {b}) = {needed}, expected 1"
+
+    # Sanity: the Newcombe interval agrees these are distinguishable.
+    lo, hi = newcombe_difference_interval(0, 100, 100, 100)
+    assert hi < 0.0, "0/100 vs 100/100 should be significantly different"
+
+
+def test_required_samples_scales_sensibly_off_the_extremes() -> None:
+    assert required_samples_per_group(0.0, 0.5) is not None
+    easy = required_samples_per_group(0.5, 0.25)
+    hard = required_samples_per_group(0.5, 0.48)
+    assert easy is not None and hard is not None
+    assert hard > easy * 10
 
 
 # =========================================================================
@@ -551,6 +578,71 @@ def test_a_failed_audit_call_is_not_counted_as_a_detection() -> None:
     # With no usable samples the interval must be maximally uninformative,
     # not a confident zero.
     assert result.interval == (0.0, 1.0)
+
+
+def test_a_successful_verdict_is_written_to_the_sample_store() -> None:
+    """The positive half of the checkpoint contract.
+
+    Only the failure path had a test, which is the wrong half to verify alone:
+    the entire n=200 accumulation rests on successful verdicts actually
+    reaching disk, and a store that silently wrote nothing would look
+    identical to one that worked until the next run re-ran everything.
+    """
+    import tempfile
+    from pathlib import Path as _Path
+
+    from ibr import variance as _variance
+    from ibr.issues import Issue
+    from ibr.schemas import AuditVerdict
+    from ibr.variance import SampleStore, measure_subject
+
+    # Patched on ibr.variance, not ibr.pipeline: variance.py binds audit_only
+    # at import time, so replacing it on the defining module has no effect
+    # here. The failure-path tests patch call_structured_tool instead, which
+    # audit_only looks up dynamically — same reason, opposite direction.
+    original = _variance.audit_only
+    calls = {"n": 0}
+
+    def always_suspicious(_issue, **_kwargs):
+        calls["n"] += 1
+        return AuditVerdict(
+            reasoning="thought about it",
+            risk_level="suspicious",
+            matched_patterns=(),
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = SampleStore(_Path(tmp) / "audit_samples.jsonl")
+        progress: list[tuple[int, int]] = []
+        _variance.audit_only = always_suspicious
+        try:
+            result = measure_subject(
+                "subj",
+                "Subject",
+                Issue(issue_id="x", title="t", author="a", body="b"),
+                is_malicious=True,
+                samples=4,
+                concurrency=2,
+                store=store,
+                audit_model="test-model",
+                progress=lambda reused, todo: progress.append((reused, todo)),
+            )
+        finally:
+            _variance.audit_only = original
+
+        assert calls["n"] == 4
+        assert result.trials == 4
+        assert result.errors == 0
+        assert result.verdicts == ["suspicious"] * 4
+        assert result.adverse == 4, "suspicious must count as reaching the Reader"
+
+        # It reached disk, and reloading sees it.
+        assert store.total() == 4
+        reopened = SampleStore(_Path(tmp) / "audit_samples.jsonl")
+        assert reopened.existing("test-model", "subj") == ["suspicious"] * 4
+
+        # The progress callback reports the split it was given.
+        assert progress == [(0, 4)]
 
 
 def test_a_failed_audit_call_is_never_written_to_the_sample_store() -> None:
