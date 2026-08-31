@@ -41,6 +41,7 @@ OFFLINE_SUITES = (
     ("tests/test_suppressions.py", ()),
     ("tests/test_replay.py", ()),
     ("tests/test_failure_paths.py", ()),
+    ("tests/test_properties.py", ()),
 )
 
 LIVE_SUITES = (

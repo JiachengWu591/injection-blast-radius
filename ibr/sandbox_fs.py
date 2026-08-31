@@ -50,10 +50,22 @@ def resolve_in_sandbox(path: str | Path) -> Path:
     Relative paths are interpreted against the sandbox root, never the CWD.
     """
     root = SANDBOX_ROOT.resolve()
-    candidate = Path(path)
-    if not candidate.is_absolute():
-        candidate = root / candidate
-    resolved = candidate.resolve()
+    try:
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        resolved = candidate.resolve()
+    except (OSError, ValueError) as exc:
+        # One failure mode, not two. Resolution can raise ValueError for a name
+        # the OS refuses outright — an embedded null byte is the reachable case,
+        # and a model can put one in a tool argument. Callers catch
+        # SandboxViolation; a second exception type escapes their handler and
+        # aborts the run instead of being reported back to the model, which is
+        # both worse behaviour and a fail-open shape of failure.
+        raise SandboxViolation(
+            f"refusing to touch {path!r}: the path cannot be resolved ({exc})"
+        ) from exc
+
     if not resolved.is_relative_to(root):
         raise SandboxViolation(
             f"refusing to touch {path!r}: resolves to {resolved}, outside {root}"

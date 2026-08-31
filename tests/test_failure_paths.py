@@ -398,6 +398,176 @@ def test_a_schema_violation_in_the_audit_also_fails_closed() -> None:
 
 
 # =========================================================================
+# ibr/comparison.py — how the Phase 4 report describes a broken run.
+# =========================================================================
+
+
+def _isolated_scenario(key: str):
+    from ibr.comparison import SCENARIOS
+
+    return next(s for s in SCENARIOS if s.key == key)
+
+
+def _audit_verdict(risk_level: str) -> dict:
+    return _tool_response(
+        TOOL,
+        '{"reasoning": "considered it", "risk_level": "'
+        + risk_level
+        + '", "matched_patterns": []}',
+    )
+
+
+def test_report_does_not_credit_the_audit_for_a_call_that_failed() -> None:
+    """The fix for a real bug, which had no test of its own.
+
+    A failed audit also reports high_risk, by design. Saying "the audit rated
+    it high_risk" about a timeout credits the probabilistic layer for work it
+    did not do — the same error as counting the fail-closed default as a
+    detection, one layer up in the prose a reader quotes.
+    """
+    from ibr.comparison import run_scenario
+
+    failure = _raises(
+        "a connection failure on the audit call, which cannot be arranged "
+        "against a working API but is the whole point of fail-closed",
+        "APIConnectionError",
+    )
+    client = replay.from_interactions([failure, failure], name="cmp_audit_failure")
+    outcome = run_scenario(
+        _isolated_scenario("isolated_malicious"), client=cast("Any", client)
+    )
+
+    assert outcome.audit_completed is False
+    assert outcome.risk_level == "high_risk (call failed)"
+    assert "did not complete" in outcome.mechanism
+    assert "not detection" in outcome.mechanism
+    assert "rated the issue high_risk" not in outcome.mechanism
+    assert not outcome.leaked
+    assert outcome.action == "no_action"
+
+
+def test_report_explains_a_run_that_failed_closed_before_the_executor() -> None:
+    """Audit fine, Reader broken: neither of the other two mechanisms applies."""
+    from ibr.comparison import run_scenario
+
+    reader_dies = _raises(
+        "a timeout on the Reader call after a clean audit; this exact ordering "
+        "cannot be produced on demand from the live API",
+        "APITimeoutError",
+    )
+    client = replay.from_interactions(
+        [
+            _synthetic(
+                "a clean audit verdict paired with a constructed Reader "
+                "failure below, so the run reaches the Reader and then breaks",
+                _audit_verdict("safe"),
+            ),
+            reader_dies,
+            reader_dies,
+        ],
+        name="cmp_reader_failure",
+    )
+    outcome = run_scenario(
+        _isolated_scenario("isolated_benign"), client=cast("Any", client)
+    )
+
+    assert outcome.audit_completed is True
+    assert outcome.risk_level == "safe"
+    assert outcome.mechanism == "The pipeline failed closed before the Executor."
+    assert outcome.action == "no_action"
+
+
+def test_report_flags_a_suspicious_verdict_for_human_review() -> None:
+    """`suspicious` passes through, so the report has to say a human should look."""
+    from ibr.comparison import run_scenario
+
+    reader_ok = _tool_response(
+        "report_issue_triage",
+        '{"reasoning": "a bug report", "issue_type": "bug", '
+        '"summary": "s", "suggested_action": "label_bug"}',
+    )
+    client = replay.from_interactions(
+        [
+            _synthetic(
+                "a suspicious audit verdict, which the live model produces only "
+                "occasionally and cannot be elicited reliably",
+                _audit_verdict("suspicious"),
+            ),
+            _synthetic(
+                "a normal triage classification, so the run reaches the "
+                "Executor with the review flag set",
+                reader_ok,
+            ),
+        ],
+        name="cmp_suspicious",
+    )
+    outcome = run_scenario(
+        _isolated_scenario("isolated_malicious"), client=cast("Any", client)
+    )
+
+    assert outcome.risk_level == "suspicious"
+    notes = " ".join(outcome.notes)
+    assert "flagged for human review" in notes
+    # The Reader ran, so the mechanism must describe the boundary, not a halt.
+    assert "none of which the Executor read" in outcome.mechanism
+    assert "chars of" in outcome.mechanism
+    assert not outcome.leaked
+
+
+def test_report_records_that_the_bypass_was_simulated() -> None:
+    """A simulated bypass must never read as a real one."""
+    from ibr.comparison import run_scenario
+
+    reader_ok = _tool_response(
+        "report_issue_triage",
+        '{"reasoning": "hidden instruction noticed", "issue_type": "bug", '
+        '"summary": "s", "suggested_action": "label_bug"}',
+    )
+    client = replay.from_interactions(
+        [
+            _synthetic(
+                "a high_risk verdict that the bypass then ignores, which is the "
+                "scenario the switch exists to make observable on demand",
+                _audit_verdict("high_risk"),
+            ),
+            _synthetic(
+                "the Reader classifying the malicious issue after the bypass",
+                reader_ok,
+            ),
+        ],
+        name="cmp_bypass",
+    )
+    outcome = run_scenario(
+        _isolated_scenario("isolated_malicious_bypassed"), client=cast("Any", client)
+    )
+
+    notes = " ".join(outcome.notes)
+    assert "audit bypass simulated" in notes
+    assert "high_risk" in notes, "the real verdict was not recorded alongside"
+    assert not outcome.leaked
+
+
+def test_a_scenario_without_retry_runs_exactly_once() -> None:
+    """The non-sampling branch of run_scenario_sampled."""
+    from ibr.comparison import run_scenario_sampled
+
+    scenario = _isolated_scenario("isolated_malicious")
+    assert scenario.retry_until_leak is False
+
+    failure = _raises(
+        "a connection failure, used here only to keep the interaction count "
+        "predictable while checking that no re-sampling happens",
+        "APIConnectionError",
+    )
+    client = replay.from_interactions([failure, failure], name="cmp_no_retry")
+    outcome = run_scenario_sampled(scenario, client=cast("Any", client))
+
+    assert outcome.attempts == 1
+    assert outcome.attempts_allowed == 1, "a non-probabilistic row showed a denominator"
+    assert outcome.notes == [], "a note was added to a scenario that does not sample"
+
+
+# =========================================================================
 # ibr/baseline_agent.py — error handling in the tool loop.
 # =========================================================================
 

@@ -31,7 +31,7 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt ruff mypy coverage
+        run: pip install -r requirements.txt ruff mypy coverage hypothesis
 
       - name: Lint
         run: ruff check .
@@ -79,6 +79,14 @@ jobs:
         # arguments and dropped connections cannot be recorded on demand, so
         # these responses are constructed — and each one must say why.
         run: coverage run --append --source=ibr tests/test_failure_paths.py
+
+      - name: Properties — the security invariants, over generated inputs
+        # Line coverage says every line ran, not that it ran on the input that
+        # breaks it. The hand-written path vectors are the cases I thought of;
+        # these are the ones I did not. This pass is what found that the guard
+        # raised ValueError on an embedded null byte — an exception the tool
+        # backend does not catch, so a model could abort a run with it.
+        run: coverage run --append --source=ibr tests/test_properties.py
 
       - name: Require full coverage of the security-critical modules
         # These four are the structural boundary: the schema parsers, the
