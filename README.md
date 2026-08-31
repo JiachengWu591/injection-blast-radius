@@ -412,6 +412,7 @@ Other entry points:
 | `python model_comparison.py` | Ask whether a stronger model screens better (400 calls) |
 | `python tools/make_comparison_svg.py` | Regenerate the figure above from a fresh run |
 | `python tests/test_phase2.py --offline` | Structural assertions, no API calls needed |
+| `python verify.py` | Every pre-push check in one command (~20s, no API key) |
 
 The provider is [DeepSeek](https://platform.deepseek.com) via the
 OpenAI-compatible API (`deepseek-v4-flash`); swapping it is a one-line change

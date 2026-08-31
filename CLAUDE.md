@@ -21,7 +21,14 @@
 - 文件读写一律走 `ibr/sandbox_fs.py`，显式 `encoding="utf-8"`，不直接用 `open()`
 - 提交习惯：一个 Phase 一次 commit，message 格式 "Phase N: xxx"
 
+## 提交前
+- **推送前必须跑 `python verify.py`**（约 20 秒，不需要 key）。它包含一个关键步骤：在**没有 `.env`** 的 git worktree 里跑一遍离线测试。开发机上有 key，CI 上没有——任何悄悄依赖 key 的"离线"测试在本地会通过、在 CI 会挂，这一步是唯一能发现它的方式
+- 改动了 `ibr/llm.py`、`ibr/pipeline.py` 或 `ibr/baseline_agent.py` 之后，再跑 `python verify.py --live`（会真实调用 API、花钱）
+- `python tools/install_hooks.py` 装 pre-push hook，把上面第一条自动化
+- 新增任何 `# type: ignore` 必须在 `tests/test_suppressions.py` 里登记并写明抑制了什么、为什么安全，否则测试失败
+
 ## 永远
 - 每个 Phase 完成先给我看，等我确认再继续下一个（见 PROJECT_SPEC.md 0.5）
 - 任何环节出错/超时/格式不对，默认拒绝不放行（fail-closed）
 - 绝不把真实密钥写进任何文件，包括测试用的
+- 报告检查结果时说清**这种检查能发现什么、不能发现什么**，不要把"某种检查没发现问题"说成"没有问题"
