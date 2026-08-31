@@ -19,7 +19,26 @@ _ENCODING = "utf-8"
 
 
 class SandboxViolation(RuntimeError):
-    """A path resolved to somewhere outside the sandbox. Always fatal."""
+    """A path resolved somewhere it must not, or to something that isn't a
+    plain file in the sandbox. Always fatal."""
+
+
+# Windows resolves these names to hardware/pseudo devices no matter which
+# directory they appear in, and regardless of extension: `sandbox/COM1` opens a
+# serial port, not a file in sandbox/. Containment alone therefore isn't enough
+# — the resolved path can sit inside the sandbox while the I/O goes somewhere
+# else entirely. Reading COM1 on a machine with a serial port can block
+# indefinitely, which an attacker-supplied path reaches directly through the
+# baseline agent's read_file tool.
+#
+# Checked on every platform, not just Windows: the corpus and fixtures are
+# shared, and a guard that only holds on some machines is worse than none
+# because it makes the machines where it fails the surprising ones.
+_WINDOWS_DEVICE_NAMES = frozenset(
+    {"con", "prn", "aux", "nul", "conin$", "conout$"}
+    | {f"com{n}" for n in range(1, 10)}
+    | {f"lpt{n}" for n in range(1, 10)}
+)
 
 
 def resolve_in_sandbox(path: str | Path) -> Path:
@@ -39,6 +58,15 @@ def resolve_in_sandbox(path: str | Path) -> Path:
         raise SandboxViolation(
             f"refusing to touch {path!r}: resolves to {resolved}, outside {root}"
         )
+
+    # Containment is necessary but not sufficient — see _WINDOWS_DEVICE_NAMES.
+    # The stem is what matters: CON.txt is the console device too.
+    for part in resolved.relative_to(root).parts:
+        if part.split(".")[0].lower() in _WINDOWS_DEVICE_NAMES:
+            raise SandboxViolation(
+                f"refusing to touch {path!r}: {part!r} names a reserved device, "
+                "which the OS routes away from the sandbox directory"
+            )
     return resolved
 
 

@@ -31,7 +31,7 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt ruff mypy
+        run: pip install -r requirements.txt ruff mypy coverage
 
       - name: Lint
         run: ruff check .
@@ -40,22 +40,44 @@ jobs:
         run: mypy
 
       - name: Phase 0 — sandbox, fixtures, credential hygiene
-        run: python tests/test_phase0.py
+        run: coverage run --append --source=ibr tests/test_phase0.py
 
       - name: Phase 2 — structural boundary
-        run: python tests/test_phase2.py --offline
+        run: coverage run --append --source=ibr tests/test_phase2.py --offline
 
       - name: Phase 3 — observability
-        run: python tests/test_phase3.py --offline
+        run: coverage run --append --source=ibr tests/test_phase3.py --offline
 
       - name: Phase 4 — comparison report
-        run: python tests/test_phase4.py --offline
+        run: coverage run --append --source=ibr tests/test_phase4.py --offline
 
       - name: Attack corpus — safety rails and matrix rendering
-        run: python tests/test_attack_corpus.py --offline
+        run: coverage run --append --source=ibr tests/test_attack_corpus.py --offline
 
       - name: Audit variance — statistics and reporting honesty
-        run: python tests/test_variance.py --offline
+        run: coverage run --append --source=ibr tests/test_variance.py --offline
+
+      - name: Require full coverage of the security-critical modules
+        # These four are the structural boundary: the schema parsers, the
+        # executor whitelist, the sandbox guard, and the paths/constants they
+        # depend on. They must be exercised entirely by tests that make no API
+        # calls, because "the boundary holds" is the one claim this project
+        # cannot afford to be taking on trust.
+        #
+        # A coverage sweep found the executor at 75%: the label_bug and
+        # label_question arms of the whitelist had no offline test, and neither
+        # did the output-audit blocking branch. Half the enumerated action set
+        # was unverified. This gate is here so that cannot recur quietly.
+        run: |
+          coverage report --show-missing \
+            --include='ibr/schemas.py,ibr/executor.py,ibr/sandbox_fs.py,ibr/config.py' \
+            --fail-under=100
+
+      - name: Coverage summary (informational)
+        # The remaining modules are dominated by API-calling paths that the
+        # offline suite cannot reach by design; they are covered by the live
+        # tests, which do not run here.
+        run: coverage report --show-missing
 
       - name: Confirm the offline suite really is offline
         # The steps above pass with no DEEPSEEK_API_KEY configured, which is

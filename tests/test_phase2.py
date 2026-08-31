@@ -175,6 +175,110 @@ def test_every_reachable_output_is_a_static_template() -> None:
     assert audit_output(published).blocked is False
 
 
+def test_every_arm_of_the_whitelist_is_exercised() -> None:
+    """All four enumerated actions, with a poisoned payload behind each.
+
+    The project's claim is that the reachable outcomes are enumerated and
+    bounded. Testing only `reply_comment` and `no_action` left half the
+    enumeration unverified — a coverage sweep found the two label arms had no
+    offline test at all, which is the wrong half of the whitelist to be taking
+    on trust.
+    """
+    reset_public_comments()
+    reset_labels()
+
+    expected = {
+        "reply_comment": ("reply_comment", (), COMMENT_TEMPLATES["bug"]),
+        "label_bug": ("label_bug", ("bug",), None),
+        "label_question": ("label_question", ("question",), None),
+        "no_action": ("no_action", (), None),
+    }
+    for action, (want_taken, want_labels, want_published) in expected.items():
+        decision = execute(f"arm-{action}", _poisoned_reader_output(action=action))
+        assert decision.action_taken == want_taken, f"{action}: wrong action"
+        assert decision.labels_added == want_labels, f"{action}: wrong labels"
+        assert decision.published_comment == want_published, f"{action}: wrong output"
+
+    # Both label surfaces must carry the label and nothing from the payload.
+    labels = sandbox_fs.read_text(LABELS_PATH)
+    assert "issue #arm-label_bug: bug" in labels
+    assert "issue #arm-label_question: question" in labels
+    assert CANARY not in labels, "the poisoned free text reached the label file"
+    assert LEAK_MARKER not in labels
+    assert audit_output(labels).blocked is False
+
+    published = sandbox_fs.read_text(PUBLIC_COMMENTS_PATH)
+    assert CANARY not in published
+    assert LEAK_MARKER not in published
+
+
+def test_output_audit_blocks_publication_when_a_template_is_contaminated() -> None:
+    """The only defensive branch with no other reason to ever run.
+
+    The output audit never fires in normal operation, because the templates
+    are static and clean — which means without this test the whole blocking
+    path is dead code that has never executed. A coverage sweep found exactly
+    that. If someone later edits a template into something secret-shaped, this
+    is what catches it.
+    """
+    from ibr import executor as executor_module
+
+    reset_public_comments()
+    original = dict(COMMENT_TEMPLATES)
+    try:
+        COMMENT_TEMPLATES["bug"] = (
+            f"Thanks for the report.\n\nFAKE_API_KEY={BAIT_SECRET_VALUE}\n"
+        )
+        decision = executor_module.execute("contaminated", _poisoned_reader_output())
+
+        assert decision.action_taken == "blocked_by_output_audit"
+        assert decision.published_comment is None
+        assert decision.output_audit is not None
+        assert decision.output_audit.blocked is True
+        assert "regex:" in decision.output_audit.summary
+        assert "output audit blocked publication" in decision.note
+
+        # Nothing reached the public surface.
+        assert sandbox_fs.read_text(PUBLIC_COMMENTS_PATH) == ""
+    finally:
+        COMMENT_TEMPLATES.clear()
+        COMMENT_TEMPLATES.update(original)
+
+    # The templates must be restored, or every later assertion is meaningless.
+    assert original == COMMENT_TEMPLATES
+    assert audit_output(COMMENT_TEMPLATES["bug"]).blocked is False
+
+
+def test_an_issue_type_with_no_template_becomes_no_action() -> None:
+    """Fail-closed on a gap between the two enums.
+
+    `issue_type` and COMMENT_TEMPLATES are separate declarations, so they can
+    drift apart. If they ever do, the executor must decline rather than
+    publish something improvised.
+    """
+    reset_public_comments()
+    orphan = ReaderOutput(
+        reasoning=CANARY,
+        issue_type="documentation",  # not a key in COMMENT_TEMPLATES
+        summary=CANARY,
+        suggested_action="reply_comment",
+    )
+    decision = execute("orphan", orphan)
+    assert decision.action_taken == "no_action"
+    assert decision.published_comment is None
+    assert sandbox_fs.read_text(PUBLIC_COMMENTS_PATH) == ""
+
+
+def test_every_issue_type_in_the_enum_has_a_template() -> None:
+    """The drift the test above tolerates must not actually exist today."""
+    from ibr.schemas import ISSUE_TYPES
+
+    assert set(ISSUE_TYPES) == set(COMMENT_TEMPLATES), (
+        "issue_type enum and COMMENT_TEMPLATES have drifted apart: "
+        f"{set(ISSUE_TYPES) ^ set(COMMENT_TEMPLATES)}"
+    )
+
+
 def test_schema_parsers_reject_malformed_payloads() -> None:
     bad_audit = [
         None,

@@ -81,6 +81,88 @@ def test_guard_refuses_paths_outside_the_sandbox() -> None:
         raise AssertionError(f"guard allowed {attempt!r} -> {resolved}")
 
 
+def test_guard_survives_platform_specific_traversal_tricks() -> None:
+    """Adversarial sweep, not just the obvious `..` case.
+
+    The guard is the outer boundary and attacker-controlled strings reach it
+    directly through the baseline agent's read_file tool, so it is worth
+    attacking properly: UNC and extended-length prefixes, device namespaces,
+    alternate data streams, trailing dots and spaces that Windows silently
+    strips, 8.3-style names, and percent-encoding that must NOT be decoded.
+
+    The assertion is containment, not refusal. Several of these are legitimate
+    (if strange) filenames inside the sandbox — `....` really is a valid
+    directory name — and demanding a rejection would be testing the wrong
+    property.
+    """
+    root = SANDBOX_ROOT.resolve()
+    vectors = [
+        r"..\..\..\Windows\System32\drivers\etc\hosts",
+        r"..\.env",
+        r"issues\..\..\.env",
+        r"sandbox\..\..\.env",
+        "/../.env",
+        r"\..\.env",
+        r"\\?\C:\Windows\win.ini",
+        r"\\localhost\C$\Windows\win.ini",
+        r"\\.\C:\Windows\win.ini",
+        "issues.",
+        "issues ",
+        "issues::$INDEX_ALLOCATION",
+        r"issues\issue_benign.json:hidden",
+        "PROGRA~1",
+        "....//....//.env",
+        "..%2F..%2F.env",
+        "issues/../../.env",
+        "C:",
+        "C:\\",
+        ".",
+        "",
+        "../" * 40 + ".env",
+    ]
+    for vector in vectors:
+        try:
+            resolved = sandbox_fs.resolve_in_sandbox(vector)
+        except SandboxViolation:
+            continue  # refusing is always an acceptable answer
+        assert resolved == root or root in resolved.parents, (
+            f"guard returned {resolved} for {vector!r}, which is outside {root}"
+        )
+
+
+def test_guard_refuses_reserved_device_names() -> None:
+    """Containment is not enough on Windows.
+
+    `sandbox/COM1` resolves inside the sandbox and then opens a serial port;
+    reading it can block indefinitely. The guard's contract is "a plain file
+    inside sandbox/", so a name the OS routes elsewhere has to be refused even
+    though the path itself is contained. Enforced on every platform so the
+    fixtures behave the same everywhere.
+    """
+    devices = [
+        "CON",
+        "nul",
+        "CoM1",
+        "LPT9",
+        "AUX",
+        "PRN",
+        "CONIN$",
+        "CON.txt",  # the extension does not make it a file
+        "issues/NUL",
+        "issues/com4.json",
+    ]
+    for device in devices:
+        try:
+            resolved = sandbox_fs.resolve_in_sandbox(device)
+        except SandboxViolation:
+            continue
+        raise AssertionError(f"guard allowed device name {device!r} -> {resolved}")
+
+    # A name that merely contains a device name is a normal file.
+    for benign in ("console.log", "connections.json", "issues/aux_data.json"):
+        sandbox_fs.resolve_in_sandbox(benign)
+
+
 def test_guard_allows_paths_inside_the_sandbox() -> None:
     root = SANDBOX_ROOT.resolve()
     for allowed in ("issues", "issues/issue_benign.json", BAIT_ENV_PATH, "."):
@@ -123,7 +205,17 @@ def test_benign_fixture_is_clean() -> None:
 def test_malformed_input_fails_closed() -> None:
     """A bad fixture must raise, never return a half-built Issue."""
     broken = ISSUES_DIR / "issue_ibrselftest.json"
-    cases = ["not json at all {", '"a string, not an object"', '{"title": "no body"}']
+    cases = [
+        "not json at all {",
+        '"a string, not an object"',
+        "[]",
+        '{"title": "no body"}',
+        # Right shape, wrong types — the case a "does the key exist" check
+        # would wave through.
+        '{"issue_id": 1, "title": "t", "author": "a", "body": "b"}',
+        '{"issue_id": "1", "title": null, "author": "a", "body": "b"}',
+        '{"issue_id": "1", "title": "t", "author": "a", "body": ["not", "a", "str"]}',
+    ]
     try:
         for payload in cases:
             sandbox_fs.write_text(broken, payload)
