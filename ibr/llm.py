@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from typing import Any, cast
 
 import openai
 
@@ -54,7 +55,13 @@ def build_client(
     """
     assert_api_key_present()
     return openai.OpenAI(
-        api_key=os.environ[API_KEY_ENV_VAR],
+        # Stripped, so the value checked and the value used are the same one.
+        # assert_api_key_present() strips before testing for emptiness, and
+        # python-dotenv strips what it loads — but a key exported straight into
+        # the shell keeps its whitespace, which would sail past the check and
+        # then produce a 401 the operator has no way to explain, since the key
+        # looks correct everywhere they can see it.
+        api_key=os.environ[API_KEY_ENV_VAR].strip(),
         base_url=DEEPSEEK_BASE_URL,
         timeout=timeout,
         max_retries=max_retries,
@@ -149,17 +156,24 @@ def call_structured_tool(
 
     last_error = "no attempt was made"
     for attempt in range(1, retries + 2):
-        # The suppression below: the openai package types messages/tools/
-        # tool_choice as TypedDict unions and this project builds them as plain
-        # dicts, because the retry path appends assistant and tool turns
-        # dynamically. Kept on this one call so the checker stays useful on the
-        # rest of the module.
-        response = client.chat.completions.create(  # type: ignore[call-overload]
+        # cast rather than `# type: ignore` on the call. The openai package
+        # types these as TypedDict unions and this project builds them as plain
+        # dicts (the retry path appends assistant and tool turns dynamically),
+        # so overload resolution fails — and a call-level ignore collapses
+        # `response` to Any, which silently switches off checking for
+        # everything derived from it. That hid the tool_calls union below,
+        # whose non-function member has no `.function`: the same defect already
+        # fixed once in baseline_agent.py, concealed a second time by the
+        # suppression meant to tidy up after it. Casting the arguments keeps
+        # the return type intact.
+        response = client.chat.completions.create(
             model=model,
             max_tokens=max_tokens,
-            messages=messages,
-            tools=[tool],
-            tool_choice={"type": "function", "function": {"name": tool_name}},
+            messages=cast("Any", messages),
+            tools=cast("Any", [tool]),
+            tool_choice=cast(
+                "Any", {"type": "function", "function": {"name": tool_name}}
+            ),
             # DeepSeek v4 enables thinking mode by default, and thinking mode
             # rejects a named-function tool_choice with a 400 ("Thinking mode
             # does not support this tool_choice"). Forcing the named tool is
@@ -173,10 +187,30 @@ def call_structured_tool(
         message = response.choices[0].message
 
         tool_calls = message.tool_calls or []
-        matching = [c for c in tool_calls if c.function.name == tool_name]
+        # `.type == "function"` rather than probing for `.function`: the SDK's
+        # union also covers custom tool calls, which have no such attribute.
+        matching = [
+            c
+            for c in tool_calls
+            if c.type == "function" and c.function.name == tool_name
+        ]
         if not matching:
             last_error = f"the model did not call {tool_name!r}"
             messages.append(message.model_dump(exclude_none=True))
+            # Any tool_call in the assistant turn needs a tool reply before a
+            # user message, or the retry request is itself rejected as
+            # malformed. Reachable whenever the model calls *something else* —
+            # forcing tool_choice makes that unlikely, not impossible, and the
+            # failure would look like an unexplained 400 on the retry rather
+            # than the schema violation it actually is.
+            for pending in tool_calls:
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": pending.id,
+                        "content": f"Error: {last_error}.",
+                    }
+                )
             messages.append(
                 {
                     "role": "user",

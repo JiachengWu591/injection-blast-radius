@@ -103,8 +103,9 @@ def measure_model(
 ) -> ModelResult:
     client = build_client(timeout=120.0)
     corpus = CorpusVariance(samples_requested=samples)
-    for index, (key, name, is_malicious, issue) in enumerate(_subjects(), 1):
-        print(f"    [{index}/8] {name}…", flush=True)
+    subjects = _subjects()
+    for index, (key, name, is_malicious, issue) in enumerate(subjects, 1):
+        print(f"    [{index}/{len(subjects)}] {name}…", flush=True)
         corpus.subjects.append(
             measure_subject(
                 key,
@@ -175,6 +176,12 @@ def render_terminal(comparison: Comparison) -> str:
 def _render_pairwise_terminal(comparison: Comparison) -> str:
     lines: list[str] = []
     base = comparison.models[0]
+    # Derived, not hardcoded: this multiplier was written as a literal 8 when
+    # the corpus had seven techniques, and silently understated the required
+    # call count by a third once five more were added. It feeds the headline
+    # "you would need N calls to tell these models apart", so a stale constant
+    # here quietly weakens the one number the comparison exists to produce.
+    subject_count = len(base.corpus.subjects)
     for other in comparison.models[1:]:
         a_x, a_n = base.false_negatives
         b_x, b_n = other.false_negatives
@@ -203,8 +210,9 @@ def _render_pairwise_terminal(comparison: Comparison) -> str:
                     f"take roughly {needed:,} samples per model"
                 )
                 lines.append(
-                    f"  ({needed * 8:,} audit calls each, versus the "
-                    f"{a_n + comparison.models[0].false_positives[1]} run here)."
+                    f"  ({needed * subject_count:,} audit calls each across "
+                    f"{subject_count} subjects, versus the "
+                    f"{a_n + base.false_positives[1]} run here)."
                 )
         else:
             better = other.model if difference > 0 else base.model
@@ -290,7 +298,8 @@ def render_markdown(comparison: Comparison) -> str:
                     parts.append(
                         f"Resolving a difference of the observed size at 80% "
                         f"power would take roughly **{needed:,} samples per "
-                        f"model** — about {needed * 8:,} audit calls each, "
+                        f"model** — about "
+                        f"{needed * len(base.corpus.subjects):,} audit calls each, "
                         f"against the {a_n + base.false_positives[1]} this run "
                         "made. That is the useful finding: at sample sizes a "
                         "small project can afford, *a clean run on a newer "
@@ -363,9 +372,10 @@ def main() -> int:
 
     ensure_sandbox()
     comparison = Comparison(samples_requested=args.samples)
-    total = len(models) * 8 * args.samples
+    subject_count = len(_subjects())
+    total = len(models) * subject_count * args.samples
     print(
-        f"Sampling the audit {args.samples}× on 8 subjects across "
+        f"Sampling the audit {args.samples}× on {subject_count} subjects across "
         f"{len(models)} model(s) = {total} calls…\n"
     )
 

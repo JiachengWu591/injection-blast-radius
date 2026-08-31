@@ -759,6 +759,57 @@ def test_comparison_states_that_a_better_rate_is_still_only_a_rate() -> None:
     assert "two materials" in markdown
 
 
+def test_comparison_derives_counts_from_the_corpus() -> None:
+    """No hardcoded subject count anywhere in the comparison script.
+
+    Four literal `8`s were correct when the corpus had seven techniques and
+    silently wrong once five more were added — one of them multiplied the
+    required-sample estimate, which is the headline number the whole script
+    exists to produce. A stale constant there weakens the finding without
+    failing anything.
+    """
+    import re
+
+    from ibr.attack_corpus import PATTERNS
+
+    source = (
+        Path(__file__).resolve().parents[1] / "model_comparison.py"
+    ).read_text(encoding="utf-8")
+
+    code = "\n".join(
+        line
+        for line in source.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    )
+    stale = re.findall(r"(?:\*\s*8\b|/8\]|\bon 8 subjects)", code)
+    assert not stale, f"hardcoded subject count in model_comparison.py: {stale}"
+
+    # And the real count is what the corpus says it is.
+    from model_comparison import _subjects
+
+    subjects = _subjects()
+    assert len(subjects) == len(PATTERNS) + 1, "benign control missing or duplicated"
+    assert sum(1 for _, _, malicious, _ in subjects if not malicious) == 1
+
+
+def test_comparison_reports_the_call_count_it_actually_needs() -> None:
+    """The required-sample figure must scale with the corpus, not a literal."""
+    comparison = Comparison(
+        models=[_model_result("weaker", misses=1), _model_result("stronger", misses=0)],
+        samples_requested=25,
+    )
+    subject_count = len(comparison.models[0].corpus.subjects)
+    markdown = render_comparison_markdown(comparison)
+
+    a_x, a_n = comparison.models[0].false_negatives
+    b_x, b_n = comparison.models[1].false_negatives
+    needed = required_samples_per_group(a_x / a_n, b_x / b_n)
+    assert needed is not None
+    assert f"{needed * subject_count:,}" in markdown, (
+        "the reported call count does not match samples x subjects"
+    )
+
+
 def test_comparison_per_subject_table_covers_every_model() -> None:
     comparison = Comparison(
         models=[_model_result("alpha", misses=1), _model_result("beta", misses=0)],

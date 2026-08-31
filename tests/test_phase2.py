@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -277,6 +278,135 @@ def test_every_issue_type_in_the_enum_has_a_template() -> None:
         "issue_type enum and COMMENT_TEMPLATES have drifted apart: "
         f"{set(ISSUE_TYPES) ^ set(COMMENT_TEMPLATES)}"
     )
+
+
+def test_retry_answers_pending_tool_calls_before_nudging() -> None:
+    """The retry request must itself be well-formed.
+
+    A tool_call in the assistant turn needs a tool reply before any user
+    message. When the model calls the wrong tool, the old code appended only a
+    user nudge, so the retry would have been rejected as malformed — surfacing
+    as an unexplained 400 instead of the schema violation it actually was.
+    Reachable because forcing tool_choice makes a different tool unlikely, not
+    impossible.
+    """
+    from ibr import llm as llm_module
+
+    class _Fn:
+        def __init__(self, name: str, arguments: str) -> None:
+            self.name = name
+            self.arguments = arguments
+
+    class _Call:
+        def __init__(self, name: str, arguments: str = "{}") -> None:
+            self.id = f"call_{name}"
+            self.type = "function"
+            self.function = _Fn(name, arguments)
+
+    class _Msg:
+        def __init__(self, calls: list[_Call]) -> None:
+            self.tool_calls = calls
+
+        def model_dump(self, **_kw: object) -> dict:
+            return {"role": "assistant", "tool_calls": ["..."]}
+
+    class _Resp:
+        def __init__(self, calls: list[_Call]) -> None:
+            self.choices = [type("C", (), {"message": _Msg(calls)})()]
+
+    wanted = "report_security_assessment"
+    turns = [
+        _Resp([_Call("some_other_tool")]),  # wrong tool -> must retry cleanly
+        _Resp([_Call(wanted, '{"ok": true}')]),
+    ]
+    sent: list[list[dict]] = []
+
+    class _Client:
+        class chat:  # noqa: N801 - mirrors the SDK's attribute layout
+            class completions:  # noqa: N801
+                @staticmethod
+                def create(**kwargs: object) -> object:
+                    sent.append(list(cast("list[dict]", kwargs["messages"])))
+                    return turns.pop(0)
+
+    result = llm_module.call_structured_tool(
+        model="m",
+        system="s",
+        user="u",
+        tool_name=wanted,
+        tool_description="d",
+        parameters={"type": "object"},
+        client=cast("Any", _Client()),
+    )
+    assert result.payload == {"ok": True}
+    assert result.attempts == 2
+
+    # The second request is the one that had to be well-formed.
+    second = sent[1]
+    roles = [m["role"] for m in second]
+    assistant_at = roles.index("assistant")
+    assert "tool" in roles[assistant_at:], (
+        f"no tool reply followed the assistant turn: {roles}"
+    )
+    assert roles.index("tool") < len(roles) - 1, "the tool reply came after the nudge"
+    assert roles[-1] == "user", "the retry should end with the nudge"
+
+
+def test_retry_ignores_tool_calls_that_are_not_function_calls() -> None:
+    """The SDK's tool_calls union has a member with no `.function`.
+
+    Probing the attribute crashed instead of retrying. This was fixed once in
+    baseline_agent.py and then hidden again in llm.py by a call-level
+    `type: ignore` that collapsed the response to Any and switched off
+    checking for everything derived from it.
+    """
+    from ibr import llm as llm_module
+
+    class _CustomCall:
+        id = "call_custom"
+        type = "custom"  # no `.function` at all
+
+    class _Fn:
+        name = "wanted_tool"
+        arguments = '{"ok": 1}'
+
+    class _GoodCall:
+        id = "call_good"
+        type = "function"
+        function = _Fn()
+
+    class _Msg:
+        def __init__(self, calls: list[object]) -> None:
+            self.tool_calls = calls
+
+        def model_dump(self, **_kw: object) -> dict:
+            return {"role": "assistant", "tool_calls": ["..."]}
+
+    class _Resp:
+        def __init__(self, calls: list[object]) -> None:
+            self.choices = [type("C", (), {"message": _Msg(calls)})()]
+
+    turns = [_Resp([_CustomCall()]), _Resp([_GoodCall()])]
+
+    class _Client:
+        class chat:  # noqa: N801
+            class completions:  # noqa: N801
+                @staticmethod
+                def create(**_kwargs: object) -> object:
+                    return turns.pop(0)
+
+    # Must retry past the custom call rather than raising AttributeError.
+    result = llm_module.call_structured_tool(
+        model="m",
+        system="s",
+        user="u",
+        tool_name="wanted_tool",
+        tool_description="d",
+        parameters={"type": "object"},
+        client=cast("Any", _Client()),
+    )
+    assert result.payload == {"ok": 1}
+    assert result.attempts == 2
 
 
 def test_schema_parsers_reject_malformed_payloads() -> None:

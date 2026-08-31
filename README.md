@@ -295,34 +295,35 @@ hasn't been made good — it's been made useless in the other direction.
 ### Would a stronger model fix it?
 
 The obvious next move is to spend more per call. `model_comparison.py` runs the
-identical corpus through both DeepSeek tiers — 400 audit calls, same prompt,
+identical corpus through both DeepSeek tiers — 650 audit calls, same prompt,
 same fixed inputs, only the model changes:
 
 | Model | False negatives | 95% CI | False positives | 95% CI |
 |---|---|---|---|---|
-| `deepseek-v4-flash` | 1/175 = 0.57% | [0.10%, 3.17%] | 0/25 | [0.00%, 13.32%] |
-| `deepseek-v4-pro` | 0/175 = 0.00% | [0.00%, 2.15%] | 0/25 | [0.00%, 13.32%] |
-
-The stronger model missed nothing and the cheaper one missed once, so the
-upgrade worked — except it didn't, or at least this experiment cannot say so:
+| `deepseek-v4-flash` | 0/300 = 0.00% | [0.00%, 1.26%] | 0/25 | [0.00%, 13.32%] |
+| `deepseek-v4-pro` | 0/300 = 0.00% | [0.00%, 1.26%] | 0/25 | [0.00%, 13.32%] |
 
 ```
 deepseek-v4-flash minus deepseek-v4-pro, false-negative rate:
-  difference +0.57%   95% CI [-1.63%, +3.17%]
+  difference +0.00%   95% CI [-1.26%, +1.26%]
   The interval spans zero: this experiment does not distinguish the two models.
-  Resolving a difference this size at 80% power would take roughly 1,366 samples per model
-  (10,928 audit calls each, versus the 200 run here).
+  The two measured rates are identical, so no sample size would separate them.
 ```
 
-**This is the most useful number in the project.** A clean run on a newer model
-is not evidence that the newer model is safer, because an experiment this size
-could not have shown otherwise. You would need roughly 55× more calls to
-resolve a difference of the size observed — and that's for a difference in a
-rate that's already under 1%. "We upgraded the model and stopped seeing misses"
-is a sentence with no information in it at these sample sizes.
+**This is the most useful result in the project, and it is a negative one.**
+Both tiers came back clean at n=25 per subject, so the comparison has nothing
+to say about which screens better — and note that `flash` scored 0/300 here
+while the same model measured 8/200 misses on one payload at n=200. Twenty-five
+samples per subject simply cannot see a rate of a few percent; an earlier run
+of this same comparison had `flash` at 1/175 and `pro` at 0/175, and its
+difference interval spanned zero too, needing an estimated 1,366 samples per
+model to resolve.
 
-One detail worth noticing: `pro` was unanimous on every subject. That's
-consistent with a real but small difference. It doesn't demonstrate one.
+The general lesson holds in both directions: **a clean run on a newer model is
+not evidence that the newer model is safer**, because an experiment this size
+could not have shown otherwise. "We upgraded and stopped seeing misses" carries
+no information at these sample sizes, and the temptation to report it as a win
+is exactly the error of treating a sampled rate as a guarantee.
 
 ### The part that isn't measured
 
