@@ -39,6 +39,7 @@ OFFLINE_SUITES = (
     ("tests/test_attack_corpus.py", ("--offline",)),
     ("tests/test_variance.py", ("--offline",)),
     ("tests/test_suppressions.py", ()),
+    ("tests/test_replay.py", ()),
 )
 
 LIVE_SUITES = (

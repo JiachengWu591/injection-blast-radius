@@ -65,6 +65,13 @@ jobs:
       - name: Audit variance — statistics and reporting honesty
         run: coverage run --append --source=ibr tests/test_variance.py --offline
 
+      - name: Replay — the API-calling paths, from recorded exchanges
+        # Drives the retry loop, the four pipeline stages, and the baseline's
+        # multi-turn tool loop against committed recordings. These modules sat
+        # near 40% because reaching them needs a key, and they are where the
+        # last several real bugs lived. Now ~80% with no network.
+        run: coverage run --append --source=ibr tests/test_replay.py
+
       - name: Require full coverage of the security-critical modules
         # These four are the structural boundary: the schema parsers, the
         # executor whitelist, the sandbox guard, and the paths/constants they

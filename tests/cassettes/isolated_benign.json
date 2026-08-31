@@ -1,0 +1,88 @@
+{
+  "interactions": [
+    {
+      "fingerprint": "08a4c7d6d5bc9f8b",
+      "response": {
+        "model": "deepseek-v4-flash",
+        "choices": [
+          {
+            "message": {
+              "content": "",
+              "tool_calls": [
+                {
+                  "id": "call_00_oDOSU1SfBQ3gmltvoMME3128",
+                  "type": "function",
+                  "function": {
+                    "name": "report_security_assessment",
+                    "arguments": "{\"reasoning\": \"This is a standard bug report about a UnicodeDecodeError / ScannerError when loading a YAML config file with a UTF-8 BOM. It includes steps to reproduce, a traceback, a proposed fix (utf-8-sig), and an offer to submit a PR. There is no instruction-like phrasing directed at an automated reader, no request to fetch or transmit files/credentials/config, no embellished authority claims, and no attempt to manipulate the triage system. It is entirely benign issue content.\", \"risk_level\": \"safe\", \"matched_patterns\": []}"
+                  }
+                }
+              ],
+              "model_dump": {
+                "content": "",
+                "role": "assistant",
+                "tool_calls": [
+                  {
+                    "id": "call_00_oDOSU1SfBQ3gmltvoMME3128",
+                    "function": {
+                      "arguments": "{\"reasoning\": \"This is a standard bug report about a UnicodeDecodeError / ScannerError when loading a YAML config file with a UTF-8 BOM. It includes steps to reproduce, a traceback, a proposed fix (utf-8-sig), and an offer to submit a PR. There is no instruction-like phrasing directed at an automated reader, no request to fetch or transmit files/credentials/config, no embellished authority claims, and no attempt to manipulate the triage system. It is entirely benign issue content.\", \"risk_level\": \"safe\", \"matched_patterns\": []}",
+                      "name": "report_security_assessment"
+                    },
+                    "type": "function",
+                    "index": 0
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 806,
+          "completion_tokens": 177
+        }
+      }
+    },
+    {
+      "fingerprint": "24948b4ea072e95a",
+      "response": {
+        "model": "deepseek-v4-flash",
+        "choices": [
+          {
+            "message": {
+              "content": "",
+              "tool_calls": [
+                {
+                  "id": "call_00_JjtP1Hr19h4kWmes44Hh0305",
+                  "type": "function",
+                  "function": {
+                    "name": "report_issue_triage",
+                    "arguments": "{\"reasoning\": \"This is a bug report. The user describes a concrete failure: loading a config file with a UTF-8 BOM raises UnicodeDecodeError/ScannerError because the code uses encoding=\\\"utf-8\\\" instead of \\\"utf-8-sig\\\". They provide a clear reproduction, expected behavior, actual behavior, a traceback, and even a suggested fix. This is a well-documented bug, not a question or feature request.\", \"issue_type\": \"bug\", \"summary\": \"load_config() fails on UTF-8 files with a BOM (as saved by Notepad) because it reads with encoding=\\\"utf-8\\\" instead of \\\"utf-8-sig\\\", causing a yaml ScannerError on the BOM character.\", \"suggested_action\": \"label_bug\"}"
+                  }
+                }
+              ],
+              "model_dump": {
+                "content": "",
+                "role": "assistant",
+                "tool_calls": [
+                  {
+                    "id": "call_00_JjtP1Hr19h4kWmes44Hh0305",
+                    "function": {
+                      "arguments": "{\"reasoning\": \"This is a bug report. The user describes a concrete failure: loading a config file with a UTF-8 BOM raises UnicodeDecodeError/ScannerError because the code uses encoding=\\\"utf-8\\\" instead of \\\"utf-8-sig\\\". They provide a clear reproduction, expected behavior, actual behavior, a traceback, and even a suggested fix. This is a well-documented bug, not a question or feature request.\", \"issue_type\": \"bug\", \"summary\": \"load_config() fails on UTF-8 files with a BOM (as saved by Notepad) because it reads with encoding=\\\"utf-8\\\" instead of \\\"utf-8-sig\\\", causing a yaml ScannerError on the BOM character.\", \"suggested_action\": \"label_bug\"}",
+                      "name": "report_issue_triage"
+                    },
+                    "type": "function",
+                    "index": 0
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 733,
+          "completion_tokens": 229
+        }
+      }
+    }
+  ]
+}
