@@ -5,6 +5,12 @@ __pycache__/
 .venv/
 venv/
 
+# Tooling artifacts
+.coverage
+.coverage.*
+.mypy_cache/
+.ruff_cache/
+
 # Secrets — never commit real credentials
 .env
 .env.local
