@@ -29,7 +29,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 CASSETTE_DIR = Path(__file__).resolve().parent / "cassettes"
 
@@ -123,7 +123,22 @@ class _Response:
 
 
 class ReplayClient:
-    """Stands in for `openai.OpenAI`, serving recorded responses in order."""
+    """Stands in for `openai.OpenAI`, serving recorded responses in order.
+
+    An interaction is normally *recorded*: it carries a request fingerprint,
+    and a mismatch fails. Some are *synthetic* instead, carrying a
+    `"synthetic"` reason and no fingerprint. Those exist because the failure
+    modes that matter most — a truncated tool-call argument, a timeout, a model
+    calling the wrong tool — cannot be produced against the live API on demand,
+    and the fail-closed paths they exercise are the ones PROJECT_SPEC.md §1.4
+    is about.
+
+    The escape hatch is deliberately noisy rather than convenient: a synthetic
+    interaction must say why it is constructed, and an assertion in
+    tests/test_replay.py requires that reason to be substantive. Otherwise
+    "synthetic" becomes the way every inconvenient fingerprint gets silenced,
+    which is how a recorded test stops testing anything.
+    """
 
     def __init__(self, interactions: list[dict], *, name: str) -> None:
         self._interactions = interactions
@@ -142,21 +157,33 @@ class ReplayClient:
         interaction = self._interactions[self.index]
         self.index += 1
 
-        actual = fingerprint(kwargs)
-        expected = interaction["fingerprint"]
-        if actual != expected:
-            raise CassetteMismatch(
-                f"cassette {self._name!r} interaction {self.index}: request "
-                f"fingerprint {actual} does not match recorded {expected}. "
-                "A prompt, model id, or tool definition changed, so the "
-                "recording no longer describes this experiment. Re-record with "
-                "`python tests/record_cassettes.py` rather than relaxing this "
-                "check — a recorded test that passes against a stale recording "
-                "is worse than no test."
-            )
+        raises = interaction.get("raises")
+        if raises:
+            raise _exception_named(raises)
+
+        if "synthetic" not in interaction:
+            actual = fingerprint(kwargs)
+            expected = interaction["fingerprint"]
+            if actual != expected:
+                raise CassetteMismatch(
+                    f"cassette {self._name!r} interaction {self.index}: request "
+                    f"fingerprint {actual} does not match recorded {expected}. "
+                    "A prompt, model id, or tool definition changed, so the "
+                    "recording no longer describes this experiment. Re-record "
+                    "with `python tests/record_cassettes.py` rather than "
+                    "relaxing this check — a recorded test that passes against "
+                    "a stale recording is worse than no test."
+                )
         return _Response(interaction["response"])
 
     def assert_fully_consumed(self) -> None:
+        """Every recorded interaction must have been used.
+
+        The complement of running past the end: if the code makes fewer calls
+        than were recorded, either a code path was lost or the recording is
+        stale, and both are worth failing on rather than passing quietly with
+        part of the scenario unexercised.
+        """
         remaining = len(self._interactions) - self.index
         if remaining:
             raise CassetteMismatch(
@@ -164,6 +191,32 @@ class ReplayClient:
                 "the code made fewer calls than were recorded. Either a code "
                 "path was lost or the recording is stale."
             )
+
+
+def _exception_named(name: str) -> Exception:
+    """Build the openai exception a synthetic interaction asks for.
+
+    Lets a cassette exercise the `openai.APIError` arms of the fail-closed
+    paths without monkeypatching, so the code under test sees the same
+    exception type it would in production.
+    """
+    import openai as _openai
+
+    if name == "APITimeoutError":
+        return _openai.APITimeoutError(request=cast("Any", None))
+    if name == "APIConnectionError":
+        return _openai.APIConnectionError(request=cast("Any", None))
+    return AssertionError(f"unsupported synthetic exception {name!r}")
+
+
+def from_interactions(interactions: list[dict], *, name: str) -> ReplayClient:
+    """Build a client from inline interactions, for constructed failure modes.
+
+    Kept separate from `load` so the distinction stays visible at the call
+    site: files under tests/cassettes/ are recordings of real exchanges, and
+    anything assembled here is a hypothesis about what the API could return.
+    """
+    return ReplayClient(interactions, name=name)
 
 
 class _Completions:

@@ -72,6 +72,14 @@ jobs:
         # last several real bugs lived. Now ~80% with no network.
         run: coverage run --append --source=ibr tests/test_replay.py
 
+      - name: Fail-closed paths, from constructed responses
+        # PROJECT_SPEC.md §1.4 is the strictest rule in the project and had no
+        # end-to-end test: both of the pipeline's fail-closed branches and most
+        # of the retry handling were unexecuted by any assertion. Truncated
+        # arguments and dropped connections cannot be recorded on demand, so
+        # these responses are constructed — and each one must say why.
+        run: coverage run --append --source=ibr tests/test_failure_paths.py
+
       - name: Require full coverage of the security-critical modules
         # These four are the structural boundary: the schema parsers, the
         # executor whitelist, the sandbox guard, and the paths/constants they

@@ -40,6 +40,7 @@ OFFLINE_SUITES = (
     ("tests/test_variance.py", ("--offline",)),
     ("tests/test_suppressions.py", ()),
     ("tests/test_replay.py", ()),
+    ("tests/test_failure_paths.py", ()),
 )
 
 LIVE_SUITES = (
@@ -58,7 +59,19 @@ class Reporter:
     def run(self, label: str, argv: list[str], *, cwd: Path = ROOT) -> bool:
         print(f"  {label} … ", end="", flush=True)
         started = time.perf_counter()
-        result = subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
+        # encoding + errors explicitly: `text=True` alone decodes with the
+        # locale codec, which is GBK on some Windows installs, and every test
+        # in this project prints box-drawing characters and em dashes. A
+        # failing test's output would then raise UnicodeDecodeError inside the
+        # reporter — swallowing the diagnostic exactly when it is needed.
+        result = subprocess.run(
+            argv,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
         elapsed = time.perf_counter() - started
         if result.returncode == 0:
             print(f"ok ({elapsed:.1f}s)")
@@ -130,11 +143,16 @@ def clean_checkout(report: Reporter) -> None:
         cwd=ROOT,
         capture_output=True,
     )
+    # Same reason as in Reporter.run: git's messages and file names are not
+    # guaranteed to be locale-decodable, and a crash here would look like a
+    # broken verifier rather than a git problem.
     created = subprocess.run(
         ["git", "worktree", "add", "--detach", str(target), "HEAD"],
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if created.returncode != 0:
         report.skip("clean checkout", created.stderr.strip()[:120])
@@ -142,7 +160,13 @@ def clean_checkout(report: Reporter) -> None:
 
     try:
         tracked = subprocess.run(
-            ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
+            ["git", "ls-files"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
         ).stdout.split()
         for rel in tracked:
             source = ROOT / rel
