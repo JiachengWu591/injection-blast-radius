@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -237,20 +238,54 @@ class SampleStore:
     exchangeable, which they are not if the provider changes the model behind a
     stable id. The alternative — discarding history on any doubt — would make
     large n unreachable, so the trade is deliberate and the report notes it.
+
+    **Writes are sharded per process.** An earlier version had every process
+    append to one file, which measured as losing 32% of records and tearing
+    lines in half under four concurrent writers ('sk"}', 'ous"}'). Worse, the
+    fail-closed loader then refused to open the damaged file, so one accidental
+    double-run permanently bricked a store holding thousands of paid-for
+    samples. `open(..., "a")` is not atomic across processes.
+
+    Sharding removes the shared resource instead of guarding it: each process
+    writes only `<base>.<pid>.jsonl` and reads every shard. No locks, no
+    platform-specific code, and no interleaving to get wrong. Two concurrent
+    runs now merely over-collect — each tops up to n independently — which is
+    wasteful and self-correcting rather than destructive.
     """
 
     def __init__(self, path: Path) -> None:
         self.path = path
+        self.shard_path = path.with_suffix(f".{os.getpid()}{path.suffix}")
         self._lock = Lock()
         self._samples: dict[tuple[str, str], list[str]] = {}
+        self.partial_lines_skipped = 0
         self._load()
 
+    def _shards(self) -> list[Path]:
+        """Every file holding samples: this process's, others', and the
+        pre-sharding single file if one is left over."""
+        parent = self.path.parent
+        if not parent.is_dir():
+            return []
+        stem, suffix = self.path.stem, self.path.suffix
+        found = sorted(parent.glob(f"{stem}.*{suffix}"))
+        if self.path.exists():
+            found.insert(0, self.path)
+        return found
+
     def _load(self) -> None:
-        if not self.path.exists():
-            return
-        with self.path.open("r", encoding="utf-8") as handle:
-            for number, line in enumerate(handle, 1):
-                line = line.strip()
+        for shard in self._shards():
+            text = shard.read_text(encoding="utf-8")
+            lines = text.splitlines()
+            # `record` writes one complete `json + "\n"` per call, so a file
+            # ending in a newline contains only whole records. If it doesn't,
+            # the final line is a write another process is still in the middle
+            # of. That makes the distinction exact rather than a guess: a
+            # malformed line is tolerated only when it is both last *and*
+            # unterminated, and stays fatal everywhere else.
+            may_be_mid_write = bool(text) and not text.endswith("\n")
+            for number, raw in enumerate(lines, 1):
+                line = raw.strip()
                 if not line:
                     continue
                 try:
@@ -258,12 +293,15 @@ class SampleStore:
                     key = (record["model"], record["subject"])
                     verdict = record["verdict"]
                 except (json.JSONDecodeError, KeyError) as exc:
+                    if may_be_mid_write and number == len(lines):
+                        self.partial_lines_skipped += 1
+                        continue
                     raise ValueError(
-                        f"{self.path}: line {number} is not a valid sample: {exc}"
+                        f"{shard}: line {number} is not a valid sample: {exc}"
                     ) from exc
                 if verdict not in RISK_LEVELS:
                     raise ValueError(
-                        f"{self.path}: line {number} has unknown verdict {verdict!r}"
+                        f"{shard}: line {number} has unknown verdict {verdict!r}"
                     )
                 self._samples.setdefault(key, []).append(verdict)
 
@@ -273,8 +311,8 @@ class SampleStore:
     def record(self, model: str, subject: str, verdict: str) -> None:
         with self._lock:
             self._samples.setdefault((model, subject), []).append(verdict)
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            with self.path.open("a", encoding="utf-8", newline="\n") as handle:
+            self.shard_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.shard_path.open("a", encoding="utf-8", newline="\n") as handle:
                 handle.write(
                     json.dumps(
                         {"model": model, "subject": subject, "verdict": verdict},

@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -128,6 +129,95 @@ def test_guard_survives_platform_specific_traversal_tricks() -> None:
         assert resolved == root or root in resolved.parents, (
             f"guard returned {resolved} for {vector!r}, which is outside {root}"
         )
+
+
+def test_guard_refuses_links_that_point_out_of_the_sandbox() -> None:
+    """The one vector the string-level tests cannot cover.
+
+    Every other traversal attempt is defeated by normalising the path text.
+    A link is different: `sandbox/escape/secret.txt` is textually contained and
+    the filesystem sends it somewhere else entirely. The guard resolves before
+    checking containment precisely so the OS gets to reveal the real target
+    first — this is the test that says so out loud.
+
+    Windows junctions need no elevation, which makes them the realistic case:
+    a stray `mklink /J` in a build script is enough. POSIX symlinks are tested
+    the same way. If the platform refuses to create any link at all the test
+    reports that instead of passing silently, because a skipped security test
+    that looks green is worse than no test.
+    """
+    root = SANDBOX_ROOT.resolve()
+    marker = "OUTSIDE_SANDBOX_MARKER_DO_NOT_READ"
+
+    with tempfile.TemporaryDirectory() as outside_dir:
+        outside = Path(outside_dir).resolve()
+        (outside / "secret.txt").write_text(
+            f"{marker}=nope\n", encoding="utf-8", newline="\n"
+        )
+
+        link = root / "test_link_escape"
+        created: list[str] = []
+        for kind in ("symlink_dir", "junction"):
+            if link.exists() or link.is_symlink():
+                break
+            try:
+                if kind == "symlink_dir":
+                    link.symlink_to(outside, target_is_directory=True)
+                else:
+                    subprocess.run(
+                        ["cmd", "/c", "mklink", "/J", str(link), str(outside)],
+                        capture_output=True,
+                        check=True,
+                    )
+                created.append(kind)
+            except (OSError, NotImplementedError, subprocess.CalledProcessError, FileNotFoundError):
+                continue
+
+        if not created:
+            raise AssertionError(
+                "could not create a symlink or junction on this platform, so "
+                "the link-escape vector went untested. Enable Developer Mode "
+                "on Windows, or run as a user that may create links."
+            )
+
+        try:
+            for vector in (
+                "test_link_escape",
+                "test_link_escape/secret.txt",
+                "issues/../test_link_escape/secret.txt",
+                "./test_link_escape/./secret.txt",
+            ):
+                try:
+                    resolved = sandbox_fs.resolve_in_sandbox(vector)
+                except SandboxViolation:
+                    continue
+                raise AssertionError(
+                    f"guard allowed {vector!r} -> {resolved}, which is outside {root}"
+                )
+
+            # And the read/write helpers, not just the resolver.
+            try:
+                content = sandbox_fs.read_text("test_link_escape/secret.txt")
+            except SandboxViolation:
+                pass
+            else:
+                raise AssertionError(f"read through the link returned: {content!r}")
+
+            try:
+                sandbox_fs.write_text("test_link_escape/planted.txt", "x")
+            except SandboxViolation:
+                pass
+            else:
+                raise AssertionError("wrote through the link")
+
+            assert not (outside / "planted.txt").exists()
+        finally:
+            # Remove the link itself, never its target.
+            if link.is_symlink() or link.exists():
+                try:
+                    link.rmdir()
+                except OSError:
+                    link.unlink(missing_ok=True)
 
 
 def test_guard_refuses_reserved_device_names() -> None:

@@ -12,6 +12,7 @@ Run standalone:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any, cast
@@ -289,6 +290,109 @@ def test_sample_store_round_trips_and_accumulates() -> None:
         assert reopened.existing("m", "s") == ["high_risk", "suspicious"]
         # Keys are per (model, subject) — samples must not bleed across models.
         assert reopened.existing("other-model", "s") == ["high_risk"]
+
+
+def test_sample_store_writes_only_to_its_own_shard() -> None:
+    """No two processes share a file, so there is nothing to interleave.
+
+    Measured before this change: four concurrent writers on one file lost 32%
+    of records and tore lines in half. The fail-closed loader then refused to
+    open the damaged file, so one accidental double-run permanently bricked a
+    store holding thousands of paid-for samples. Sharding removes the shared
+    resource rather than guarding it.
+    """
+    import os
+    import tempfile
+    from pathlib import Path as _Path
+
+    from ibr.variance import SampleStore
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = _Path(tmp) / "audit_samples.jsonl"
+        store = SampleStore(base)
+        store.record("m", "s", "safe")
+
+        assert str(os.getpid()) in store.shard_path.name
+        assert store.shard_path != base
+        assert store.shard_path.exists()
+        assert not base.exists(), "wrote to the shared base path"
+
+
+def test_sample_store_reads_every_shard_including_other_processes() -> None:
+    import tempfile
+    from pathlib import Path as _Path
+
+    from ibr.variance import SampleStore
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = _Path(tmp) / "audit_samples.jsonl"
+        # Two shards as if written by other processes, plus a legacy
+        # pre-sharding file at the base path.
+        for name, verdict in (
+            ("audit_samples.111.jsonl", "safe"),
+            ("audit_samples.222.jsonl", "suspicious"),
+            ("audit_samples.jsonl", "high_risk"),
+        ):
+            (_Path(tmp) / name).write_text(
+                json.dumps({"model": "m", "subject": "s", "verdict": verdict}) + "\n",
+                encoding="utf-8",
+            )
+
+        store = SampleStore(base)
+        assert store.total() == 3, "a shard was not read"
+        assert sorted(store.existing("m", "s")) == ["high_risk", "safe", "suspicious"]
+
+
+def test_sample_store_tolerates_a_shard_being_written_right_now() -> None:
+    """A truncated last line means a live writer, not damage.
+
+    `record` writes one complete `json + "\\n"` per call, so a file that ends
+    in a newline holds only whole records. Tolerating a malformed final line
+    only when the file is *also* unterminated makes the rule exact rather than
+    a guess: it stops a concurrent run from crashing the reader, and a corrupt
+    line that happens to be last but properly terminated is still fatal.
+    """
+    import tempfile
+    from pathlib import Path as _Path
+
+    from ibr.variance import SampleStore
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = _Path(tmp) / "audit_samples.jsonl"
+        good = json.dumps({"model": "m", "subject": "s", "verdict": "safe"})
+        (_Path(tmp) / "audit_samples.999.jsonl").write_text(
+            good + "\n" + good + "\n" + '{"model": "m", "subj',  # mid-write
+            encoding="utf-8",
+        )
+
+        store = SampleStore(base)
+        assert store.total() == 2
+        assert store.partial_lines_skipped == 1
+
+        # Damage that is not at the end is still fatal.
+        (_Path(tmp) / "audit_samples.998.jsonl").write_text(
+            good + "\ntorn in the middle\n" + good + "\n", encoding="utf-8"
+        )
+        try:
+            SampleStore(base)
+        except ValueError as exc:
+            assert "line 2" in str(exc)
+        else:
+            raise AssertionError("mid-file corruption was tolerated")
+
+        # A malformed final line that IS newline-terminated was fully written,
+        # so it is damage rather than a live writer.
+        (_Path(tmp) / "audit_samples.997.jsonl").write_text(
+            good + "\nfully written but garbage\n", encoding="utf-8"
+        )
+        try:
+            SampleStore(base)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(
+                "a terminated corrupt final line was mistaken for a live write"
+            )
 
 
 def test_sample_store_rejects_a_corrupt_file() -> None:
