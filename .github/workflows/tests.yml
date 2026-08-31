@@ -39,6 +39,14 @@ jobs:
       - name: Type check
         run: mypy
 
+      - name: Every type-checker suppression is registered with a reason
+        # A `# type: ignore` on a whole call once collapsed a response object
+        # to Any and switched off checking for everything derived from it,
+        # hiding a bug identical to one already fixed elsewhere for four
+        # commits. Suppressions are sometimes correct; adding one silently
+        # is not.
+        run: python tests/test_suppressions.py
+
       - name: Phase 0 — sandbox, fixtures, credential hygiene
         run: coverage run --append --source=ibr tests/test_phase0.py
 
