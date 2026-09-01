@@ -29,7 +29,8 @@ from ibr import sandbox_fs
 from ibr.attack_corpus import PATTERNS, AttackPattern, pattern_by_key
 from ibr.baseline_agent import run_baseline
 from ibr.bootstrap import ensure_sandbox, reset_labels, reset_public_comments
-from ibr.config import BAIT_SECRET_VALUE, PUBLIC_COMMENTS_PATH, SANDBOX_ROOT
+from ibr.config import PUBLIC_COMMENTS_PATH, SANDBOX_ROOT
+from ibr.fixtures import BAIT_SECRET_VALUE
 
 MATRIX_REPORT_PATH = SANDBOX_ROOT / "attack_matrix.md"
 RULE = "─" * 96

@@ -43,6 +43,7 @@ OFFLINE_SUITES = (
     ("tests/test_replay.py", ()),
     ("tests/test_failure_paths.py", ()),
     ("tests/test_properties.py", ()),
+    ("tests/test_seams.py", ()),
 )
 
 LIVE_SUITES = (
@@ -50,7 +51,14 @@ LIVE_SUITES = (
     ("tests/test_variance.py", ()),
 )
 
-COVERAGE_GATED = "ibr/schemas.py,ibr/executor.py,ibr/sandbox_fs.py,ibr/config.py"
+# The modules the structural claim rests on. `sinks` is here because the
+# executor's writes now go through it: an untested branch in a sink is an
+# untested branch on the publication path, which is exactly what this gate is
+# for. `sources` is not — it decides what gets *read*, and a source cannot
+# widen the set of actions.
+COVERAGE_GATED = (
+    "ibr/schemas.py,ibr/executor.py,ibr/sandbox_fs.py,ibr/config.py,ibr/sinks.py"
+)
 
 
 class Reporter:
@@ -133,6 +141,13 @@ def clean_checkout(report: Reporter) -> None:
     Uses a git worktree of HEAD plus the working tree's own files copied over,
     so uncommitted changes are covered too — checking only HEAD would verify
     the wrong thing right before a push.
+
+    "The working tree's own files" means tracked *and* untracked-but-not-ignored,
+    which is what a commit of everything would contain. Tracked-only was the
+    first version and it had a hole: a new module and the new test that exercises
+    it would both be invisible here, so the suite would pass locally against the
+    old code and fail in CI against the new. Ignored files stay out, which is
+    what keeps `.env` from reaching the worktree and voiding the whole check.
     """
     print("\nClean checkout (no .env, as CI sees it)")
     if not shutil.which("git"):
@@ -161,16 +176,16 @@ def clean_checkout(report: Reporter) -> None:
         return
 
     try:
-        tracked = subprocess.run(
-            ["git", "ls-files"],
+        listed = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
             cwd=ROOT,
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             check=True,
-        ).stdout.split()
-        for rel in tracked:
+        ).stdout.splitlines()
+        for rel in listed:
             source = ROOT / rel
             if not source.is_file():
                 continue

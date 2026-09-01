@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from attack_matrix import MatrixRow, render_markdown, render_terminal  # noqa: E402
 from ibr.attack_corpus import PATTERNS, pattern_by_key  # noqa: E402
 from ibr.bootstrap import ensure_sandbox  # noqa: E402
-from ibr.config import BAIT_SECRET_VALUE  # noqa: E402
+from ibr.fixtures import BAIT_SECRET_VALUE  # noqa: E402
 from ibr.executor import COMMENT_TEMPLATES, execute  # noqa: E402
 from ibr.schemas import ReaderOutput  # noqa: E402
 

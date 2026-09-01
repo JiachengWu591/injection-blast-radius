@@ -1,6 +1,6 @@
 """The dependency layering is computed, not declared.
 
-ARCHITECTURE.md draws a six-layer graph. A drawing goes stale the first time
+ARCHITECTURE.md draws a layered graph. A drawing goes stale the first time
 someone adds an import, and nothing fails — the diagram just quietly starts
 lying, which is worse than having no diagram because a reader trusts it.
 
@@ -35,18 +35,21 @@ DECLARED_LAYERS: dict[str, int] = {
     "config": 0,
     "schemas": 0,
     "output_audit": 0,
+    "fixtures": 0,
     "llm": 1,
     "sandbox_fs": 1,
     "bootstrap": 2,
     "issues": 2,
     "observability": 2,
-    "executor": 2,
+    "sinks": 2,
     "attack_corpus": 3,
     "baseline_agent": 3,
-    "pipeline": 3,
-    "comparison": 4,
-    "variance": 4,
-    "report": 5,
+    "executor": 3,
+    "sources": 3,
+    "pipeline": 4,
+    "comparison": 5,
+    "variance": 5,
+    "report": 6,
 }
 
 # Modules that must keep depending on nothing inside the package. These are the

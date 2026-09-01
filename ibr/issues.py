@@ -50,35 +50,50 @@ def available_issues() -> list[str]:
     )
 
 
+def parse_issue(raw: str, *, origin: str) -> Issue:
+    """Validate one JSON object into an Issue, or fail closed.
+
+    Separate from any particular storage so every source shares one validator.
+    A second source with its own slightly different checks is how a field that
+    is a string in one path and an integer in another gets into the pipeline.
+
+    Every failure mode raises. There is no "return None and let the caller
+    decide" path, because the caller deciding is exactly how a malformed input
+    turns into a skipped check.
+    """
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise MalformedIssue(f"{origin} is not valid JSON: {exc}") from exc
+
+    if not isinstance(payload, dict):
+        raise MalformedIssue(
+            f"{origin} must contain a JSON object, got {type(payload)}"
+        )
+
+    missing = [field for field in _REQUIRED_FIELDS if field not in payload]
+    if missing:
+        raise MalformedIssue(f"{origin} is missing required field(s): {missing}")
+
+    wrong_type = [
+        field for field in _REQUIRED_FIELDS if not isinstance(payload[field], str)
+    ]
+    if wrong_type:
+        raise MalformedIssue(f"{origin} field(s) must be strings: {wrong_type}")
+
+    return Issue(**{field: payload[field] for field in _REQUIRED_FIELDS})
+
+
 def load_issue(name: str) -> Issue:
     """Load sandbox/issues/issue_<name>.json, or fail closed.
 
-    Every failure mode here raises. There is no "return None and let the caller
-    decide" path, because the caller deciding is exactly how a malformed input
-    turns into a skipped check.
+    Kept as a module-level function because every entry script and test calls
+    it. `ibr/sources.py` is the same thing behind a protocol, for when the
+    issues stop being fixtures on disk.
     """
     path = ISSUES_DIR / f"issue_{name}.json"
     if not sandbox_fs.exists(path):
         raise MalformedIssue(
             f"no such issue fixture: {name!r} (have: {available_issues()})"
         )
-
-    try:
-        payload = json.loads(sandbox_fs.read_text(path))
-    except json.JSONDecodeError as exc:
-        raise MalformedIssue(f"{path} is not valid JSON: {exc}") from exc
-
-    if not isinstance(payload, dict):
-        raise MalformedIssue(f"{path} must contain a JSON object, got {type(payload)}")
-
-    missing = [field for field in _REQUIRED_FIELDS if field not in payload]
-    if missing:
-        raise MalformedIssue(f"{path} is missing required field(s): {missing}")
-
-    wrong_type = [
-        field for field in _REQUIRED_FIELDS if not isinstance(payload[field], str)
-    ]
-    if wrong_type:
-        raise MalformedIssue(f"{path} field(s) must be strings: {wrong_type}")
-
-    return Issue(**{field: payload[field] for field in _REQUIRED_FIELDS})
+    return parse_issue(sandbox_fs.read_text(path), origin=str(path))

@@ -34,7 +34,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ibr import sandbox_fs  # noqa: E402
 from ibr.baseline_agent import run_baseline  # noqa: E402
 from ibr.bootstrap import ensure_sandbox, reset_labels, reset_public_comments  # noqa: E402
-from ibr.config import BAIT_SECRET_VALUE, PUBLIC_COMMENTS_PATH  # noqa: E402
+from ibr.config import PUBLIC_COMMENTS_PATH  # noqa: E402
+from ibr.fixtures import BAIT_SECRET_VALUE
 from ibr.executor import COMMENT_TEMPLATES  # noqa: E402
 from ibr.issues import load_issue  # noqa: E402
 from ibr.pipeline import run_isolated  # noqa: E402
@@ -229,7 +230,7 @@ def test_baseline_read_file_stayed_inside_the_sandbox() -> None:
     when it asks is live code. So this is a real check on the guard, driven by
     whatever the model actually tried.
     """
-    from ibr.config import BAIT_ENV_CONTENT
+    from ibr.fixtures import BAIT_ENV_CONTENT
 
     sandbox_only = set(BAIT_ENV_CONTENT.splitlines())
     result = _baseline("baseline_malicious", "malicious")

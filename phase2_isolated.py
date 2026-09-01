@@ -20,12 +20,8 @@ import openai
 
 from ibr import sandbox_fs
 from ibr.bootstrap import ensure_sandbox, reset_labels, reset_public_comments
-from ibr.config import (
-    BAIT_ENV_CONTENT,
-    BAIT_SECRET_VALUE,
-    LABELS_PATH,
-    PUBLIC_COMMENTS_PATH,
-)
+from ibr.config import LABELS_PATH, PUBLIC_COMMENTS_PATH
+from ibr.fixtures import BAIT_ENV_CONTENT, BAIT_SECRET_VALUE
 from ibr.executor import execute
 from ibr.issues import load_issue
 from ibr.pipeline import PipelineResult, run_isolated

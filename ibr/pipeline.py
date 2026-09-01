@@ -48,6 +48,7 @@ from .schemas import (
     parse_audit_verdict,
     parse_reader_output,
 )
+from .sinks import DEFAULT_SINK, ActionSink
 
 AUDIT_SYSTEM_PROMPT = (
     "You are a security screening step in an automated issue-triage pipeline. "
@@ -207,8 +208,13 @@ def run_isolated(
     audit_model: str = AUDIT_MODEL,
     reader_model: str = READER_MODEL,
     simulate_audit_bypass: bool = False,
+    sink: ActionSink = DEFAULT_SINK,
 ) -> PipelineResult:
     """Run one issue through the full isolated pipeline.
+
+    `sink` is passed straight through to the executor and is the one thing here
+    that is meant to be replaced when this runs against something real. Pass a
+    `DryRunSink` to see what would have been posted without posting it.
 
     `simulate_audit_bypass` models the case the whole project is really about:
     an adaptive attacker who has defeated the probabilistic screening. The
@@ -259,7 +265,7 @@ def run_isolated(
                 output_summary="(no valid output — failing closed to high_risk)",
             )
         )
-        result.decision = execute(issue.issue_id, None)
+        result.decision = execute(issue.issue_id, None, sink=sink)
         _emit_log(result)
         return result
 
@@ -297,7 +303,7 @@ def run_isolated(
                 output_summary="pipeline halted; nothing downstream ran",
             )
         )
-        result.decision = execute(issue.issue_id, None)
+        result.decision = execute(issue.issue_id, None, sink=sink)
         _emit_log(result)
         return result
 
@@ -341,7 +347,7 @@ def run_isolated(
                 output_summary="(no valid output — failing closed to no_action)",
             )
         )
-        result.decision = execute(issue.issue_id, None)
+        result.decision = execute(issue.issue_id, None, sink=sink)
         _emit_log(result)
         return result
 
@@ -392,7 +398,7 @@ def run_isolated(
 
     # --- Stage 3: Executor (trusted side) + Stage 4: output audit ----------
     started = time.perf_counter()
-    decision = execute(issue.issue_id, reader_output)
+    decision = execute(issue.issue_id, reader_output, sink=sink)
     result.decision = decision
     result.stages.append(
         StageRecord(

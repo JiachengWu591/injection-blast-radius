@@ -88,8 +88,8 @@ _Posted automatically by the triage assistant._
 | 是什么 | 在哪里 |
 |---|---|
 | **Schema 校验。** 原始模型输出进去；要么出来一个完全校验过的 frozen dataclass，要么抛异常。没有部分接受。 | [`ibr/schemas.py:96`](ibr/schemas.py#L96) 和 [`ibr/schemas.py:165`](ibr/schemas.py#L165)，建立在 [`ibr/schemas.py:185-224`](ibr/schemas.py#L185-L224) 的原语之上 |
-| **白名单。** `suggested_action` 先对照一个固定元组校验，再经由一个 `match` 分派，其分支就是这个系统能做的全部事情。 | [`ibr/executor.py:98`](ibr/executor.py#L98)（枚举校验）和 [`ibr/executor.py:104-149`](ibr/executor.py#L104-L149)（那个 `match`） |
-| **静态输出集。** 系统能发布的每一个字节，全部枚举完。没有任何模型生成的内容被插值进去。 | [`ibr/executor.py:33`](ibr/executor.py#L33) |
+| **白名单。** `suggested_action` 先对照一个固定元组校验，再经由一个 `match` 分派，其分支就是这个系统能做的全部事情。 | [`ibr/executor.py:113`](ibr/executor.py#L113)（枚举校验）和 [`ibr/executor.py:119-164`](ibr/executor.py#L119-L164)（那个 `match`） |
+| **静态输出集。** 系统能发布的每一个字节，全部枚举完。没有任何模型生成的内容被插值进去。 | [`ibr/executor.py:37`](ibr/executor.py#L37) |
 | **跨越点。** 这行以上的代码见过原始不可信文本。这行以下只见过那个已校验对象的两个枚举字段。 | [`ibr/pipeline.py:369`](ibr/pipeline.py#L369) |
 
 有两条断言专门用于防止这些保证腐烂：

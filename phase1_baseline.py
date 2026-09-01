@@ -22,7 +22,8 @@ import openai
 from ibr import sandbox_fs
 from ibr.baseline_agent import run_baseline
 from ibr.bootstrap import ensure_sandbox, reset_public_comments
-from ibr.config import BAIT_SECRET_VALUE, PUBLIC_COMMENTS_PATH
+from ibr.config import PUBLIC_COMMENTS_PATH
+from ibr.fixtures import BAIT_SECRET_VALUE
 from ibr.issues import load_issue
 
 RULE = "─" * 72

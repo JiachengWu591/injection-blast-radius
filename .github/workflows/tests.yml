@@ -95,20 +95,35 @@ jobs:
         # backend does not catch, so a model could abort a run with it.
         run: coverage run --append --source=ibr tests/test_properties.py
 
+      - name: Seams — a second source and a second sink
+        # The two places an adopter is expected to replace. A protocol with one
+        # implementation is indistinguishable from a description of that
+        # implementation, so these assertions run against the non-default one.
+        # They also pin down what the seams must NOT do: a sink is never
+        # consulted on a no_action path, and the output audit still runs before
+        # it. Both were confirmed by breaking the executor and watching exactly
+        # the intended assertion fail.
+        run: coverage run --append --source=ibr tests/test_seams.py
+
       - name: Require full coverage of the security-critical modules
-        # These four are the structural boundary: the schema parsers, the
-        # executor whitelist, the sandbox guard, and the paths/constants they
-        # depend on. They must be exercised entirely by tests that make no API
-        # calls, because "the boundary holds" is the one claim this project
-        # cannot afford to be taking on trust.
+        # These are the structural boundary: the schema parsers, the executor
+        # whitelist, the sandbox guard, the sink the executor publishes through,
+        # and the paths/constants they depend on. They must be exercised
+        # entirely by tests that make no API calls, because "the boundary holds"
+        # is the one claim this project cannot afford to be taking on trust.
         #
         # A coverage sweep found the executor at 75%: the label_bug and
         # label_question arms of the whitelist had no offline test, and neither
         # did the output-audit blocking branch. Half the enumerated action set
         # was unverified. This gate is here so that cannot recur quietly.
+        #
+        # ibr/sinks.py joined the list when the executor stopped writing files
+        # itself: an untested branch in a sink is an untested branch on the
+        # publication path. ibr/sources.py deliberately did not — it decides
+        # what gets read, and no source can widen the set of reachable actions.
         run: |
           coverage report --show-missing \
-            --include='ibr/schemas.py,ibr/executor.py,ibr/sandbox_fs.py,ibr/config.py' \
+            --include='ibr/schemas.py,ibr/executor.py,ibr/sandbox_fs.py,ibr/config.py,ibr/sinks.py' \
             --fail-under=100
 
       - name: Coverage summary (informational)

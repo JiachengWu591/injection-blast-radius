@@ -21,7 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ibr import sandbox_fs  # noqa: E402
 from ibr.bootstrap import ensure_sandbox  # noqa: E402
 from ibr.comparison import SCENARIOS, Outcome, run_scenario  # noqa: E402
-from ibr.config import BAIT_SECRET_VALUE, REPORT_PATH  # noqa: E402
+from ibr.config import REPORT_PATH  # noqa: E402
+from ibr.fixtures import BAIT_SECRET_VALUE
 from ibr.observability import group_runs, load_records  # noqa: E402
 from ibr.report import render_markdown, render_terminal  # noqa: E402
 
@@ -183,10 +184,10 @@ def test_documentation_line_citations_still_point_at_the_right_code() -> None:
     anchors = {
         ("ibr/schemas.py", 96): "def parse_audit_verdict",
         ("ibr/schemas.py", 165): "def parse_reader_output",
-        ("ibr/executor.py", 33): "COMMENT_TEMPLATES",
-        ("ibr/executor.py", 98): "if action not in SUGGESTED_ACTIONS",
-        ("ibr/executor.py", 104): "match action:",
-        ("ibr/pipeline.py", 369): "The structured boundary",
+        ("ibr/executor.py", 37): "COMMENT_TEMPLATES",
+        ("ibr/executor.py", 113): "if action not in SUGGESTED_ACTIONS",
+        ("ibr/executor.py", 119): "match action:",
+        ("ibr/pipeline.py", 375): "The structured boundary",
         ("ibr/baseline_agent.py", 149): "def _post_comment_impl",
     }
     for (rel, line_no), expected in anchors.items():

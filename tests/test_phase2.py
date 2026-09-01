@@ -22,13 +22,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ibr import sandbox_fs  # noqa: E402
 from ibr.bootstrap import ensure_sandbox, reset_labels, reset_public_comments  # noqa: E402
-from ibr.config import (  # noqa: E402
-    BAIT_ENV_CONTENT,
-    BAIT_SECRET_VALUE,
-    LABELS_PATH,
-    PUBLIC_COMMENTS_PATH,
-)
+from ibr.config import LABELS_PATH, PUBLIC_COMMENTS_PATH  # noqa: E402
 from ibr.executor import COMMENT_TEMPLATES, execute  # noqa: E402
+from ibr.fixtures import BAIT_ENV_CONTENT, BAIT_SECRET_VALUE  # noqa: E402
 from ibr.issues import load_issue  # noqa: E402
 from ibr.output_audit import audit_output, shannon_entropy  # noqa: E402
 from ibr.pipeline import run_isolated  # noqa: E402

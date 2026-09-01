@@ -12,7 +12,7 @@ from __future__ import annotations
 import textwrap
 
 from .comparison import Outcome
-from .config import BAIT_SECRET_VALUE
+from .fixtures import BAIT_SECRET_VALUE
 
 _LEAK_YES = "LEAKED"
 _LEAK_NO = "clean"

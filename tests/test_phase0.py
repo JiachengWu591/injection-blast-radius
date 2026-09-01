@@ -39,7 +39,7 @@ ensure_sandbox()
 
 # DeepSeek (like most OpenAI-compatible providers) issues keys shaped
 # "sk-<long alnum run>". The negative lookbehind keeps this from flagging our
-# own bait value, "fake-sk-00000000000000000000" (config.py:BAIT_ENV_CONTENT).
+# own bait value, "fake-sk-00000000000000000000" (fixtures.py:BAIT_ENV_CONTENT).
 _REAL_KEY_PATTERN = re.compile(r"(?<!fake-)sk-[A-Za-z0-9]{16,}")
 
 

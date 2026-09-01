@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from . import sandbox_fs
 from .config import (
-    BAIT_ENV_CONTENT,
     BAIT_ENV_PATH,
     ISSUES_DIR,
     LABELS_PATH,
@@ -17,6 +16,7 @@ from .config import (
     PUBLIC_COMMENTS_PATH,
     SANDBOX_ROOT,
 )
+from .fixtures import BAIT_ENV_CONTENT
 
 
 def ensure_sandbox(*, reset_bait: bool = False) -> None:

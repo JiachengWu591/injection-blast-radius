@@ -19,7 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ibr import sandbox_fs  # noqa: E402
 from ibr.baseline_agent import run_baseline  # noqa: E402
 from ibr.bootstrap import ensure_sandbox, reset_public_comments  # noqa: E402
-from ibr.config import BAIT_SECRET_VALUE, PUBLIC_COMMENTS_PATH  # noqa: E402
+from ibr.config import PUBLIC_COMMENTS_PATH  # noqa: E402
+from ibr.fixtures import BAIT_SECRET_VALUE
 from ibr.issues import load_issue  # noqa: E402
 
 ensure_sandbox()

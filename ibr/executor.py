@@ -17,16 +17,20 @@ rules that are not negotiable:
 That is what makes this layer structural rather than probabilistic: a smarter
 attack does not widen the set of reachable outcomes, because the set is
 enumerated below.
+
+Where those outcomes land is a separate question, answered by `ibr/sinks.py`.
+The executor no longer writes files itself; it hands the chosen action to a
+sink. That keeps the three rules above independent of the destination, so
+pointing this at a real issue tracker cannot weaken them by accident.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from . import sandbox_fs
-from .config import LABELS_PATH, PUBLIC_COMMENTS_PATH
 from .output_audit import OutputAuditResult, audit_output
 from .schemas import SUGGESTED_ACTIONS, ReaderOutput
+from .sinks import DEFAULT_SINK, ActionSink
 
 # Every byte this system can ever publish, enumerated. Static text only — no
 # interpolation of anything derived from the issue or from model output.
@@ -75,22 +79,33 @@ def _no_action(note: str) -> ExecutorDecision:
     )
 
 
-def _publish(issue_id: str, body: str) -> tuple[str | None, OutputAuditResult]:
-    """Run the output audit, then write only if it comes back clean."""
+def _publish(
+    issue_id: str, body: str, sink: ActionSink
+) -> tuple[str | None, OutputAuditResult]:
+    """Run the output audit, then hand it to the sink only if it comes back clean.
+
+    The audit runs here rather than inside the sink on purpose. A sink is
+    swappable; the last check before anything becomes public is not.
+    """
     verdict = audit_output(body)
     if verdict.blocked:
         return None, verdict
-    header = f"\n----- comment on issue #{issue_id} (isolated pipeline) -----\n"
-    sandbox_fs.append_text(PUBLIC_COMMENTS_PATH, header + body.rstrip() + "\n")
+    sink.publish_comment(issue_id, body)
     return body, verdict
 
 
-def _add_label(issue_id: str, label: str) -> None:
-    sandbox_fs.append_text(LABELS_PATH, f"issue #{issue_id}: {label}\n")
+def execute(
+    issue_id: str,
+    reader_output: ReaderOutput | None,
+    *,
+    sink: ActionSink = DEFAULT_SINK,
+) -> ExecutorDecision:
+    """Decide and act. Every path that isn't an explicit success is no_action.
 
-
-def execute(issue_id: str, reader_output: ReaderOutput | None) -> ExecutorDecision:
-    """Decide and act. Every path that isn't an explicit success is no_action."""
+    `sink` is where the two possible actions land. It cannot influence the
+    decision — it is passed the outcome, never consulted about it — so pointing
+    this at a real issue tracker changes the destination and nothing else.
+    """
     if reader_output is None:
         return _no_action("reader produced no valid output — failing closed")
 
@@ -108,7 +123,7 @@ def execute(issue_id: str, reader_output: ReaderOutput | None) -> ExecutorDecisi
                 return _no_action(
                     f"no template for issue_type {reader_output.issue_type!r}"
                 )
-            published, verdict = _publish(issue_id, template)
+            published, verdict = _publish(issue_id, template, sink)
             if published is None:
                 return ExecutorDecision(
                     action_taken="blocked_by_output_audit",
@@ -126,7 +141,7 @@ def execute(issue_id: str, reader_output: ReaderOutput | None) -> ExecutorDecisi
             )
 
         case "label_bug":
-            _add_label(issue_id, "bug")
+            sink.add_label(issue_id, "bug")
             return ExecutorDecision(
                 action_taken="label_bug",
                 published_comment=None,
@@ -136,7 +151,7 @@ def execute(issue_id: str, reader_output: ReaderOutput | None) -> ExecutorDecisi
             )
 
         case "label_question":
-            _add_label(issue_id, "question")
+            sink.add_label(issue_id, "question")
             return ExecutorDecision(
                 action_taken="label_question",
                 published_comment=None,

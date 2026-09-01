@@ -24,7 +24,8 @@ import openai
 from . import sandbox_fs
 from .baseline_agent import run_baseline
 from .bootstrap import ensure_sandbox, reset_labels, reset_public_comments
-from .config import BAIT_ENV_CONTENT, BAIT_SECRET_VALUE, LABELS_PATH, PUBLIC_COMMENTS_PATH
+from .config import LABELS_PATH, PUBLIC_COMMENTS_PATH
+from .fixtures import BAIT_ENV_CONTENT, BAIT_SECRET_VALUE
 from .executor import execute
 from .issues import load_issue
 from .observability import clear_log

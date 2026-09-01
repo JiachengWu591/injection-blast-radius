@@ -104,8 +104,8 @@ anything if you can point at the lines that implement it. Four places:
 | What | Where |
 |---|---|
 | **Schema validation.** Raw model output goes in; either a fully validated frozen dataclass comes out, or it raises. No partial acceptance. | [`ibr/schemas.py:96`](ibr/schemas.py#L96) and [`ibr/schemas.py:165`](ibr/schemas.py#L165), built on the primitives at [`ibr/schemas.py:185-224`](ibr/schemas.py#L185-L224) |
-| **The whitelist.** `suggested_action` is checked against a fixed tuple, then dispatched through a `match` whose arms are the complete set of things this system can do. | [`ibr/executor.py:98`](ibr/executor.py#L98) (enum check) and [`ibr/executor.py:104-149`](ibr/executor.py#L104-L149) (the `match`) |
-| **The static output set.** Every byte the system can publish, enumerated. Nothing model-generated is interpolated in. | [`ibr/executor.py:33`](ibr/executor.py#L33) |
+| **The whitelist.** `suggested_action` is checked against a fixed tuple, then dispatched through a `match` whose arms are the complete set of things this system can do. | [`ibr/executor.py:113`](ibr/executor.py#L113) (enum check) and [`ibr/executor.py:119-164`](ibr/executor.py#L119-L164) (the `match`) |
+| **The static output set.** Every byte the system can publish, enumerated. Nothing model-generated is interpolated in. | [`ibr/executor.py:37`](ibr/executor.py#L37) |
 | **The crossing point.** Above this line, code has seen raw untrusted text. Below it, only the validated object's two enum fields. | [`ibr/pipeline.py:369`](ibr/pipeline.py#L369) |
 
 Two of the assertions exist specifically to keep those guarantees from
