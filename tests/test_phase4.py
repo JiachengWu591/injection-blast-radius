@@ -208,7 +208,14 @@ def test_the_translations_report_the_same_numbers() -> None:
     import re
 
     root = Path(__file__).resolve().parents[1]
-    pairs = [("README.md", "README.zh-CN.md"), ("DEMO.md", "DEMO.zh-CN.md")]
+    # Discovered, not listed: a future translation nobody remembered to add to
+    # a fixed list is exactly the one whose figures would drift unnoticed.
+    pairs = [
+        (p.name.replace(".zh-CN", ""), p.name)
+        for p in sorted(root.glob("*.zh-CN.md"))
+        if (root / p.name.replace(".zh-CN", "")).is_file()
+    ]
+    assert len(pairs) >= 3, f"expected at least three translated pairs, found {pairs}"
 
     # Figures that carry meaning: rates, counts, and interval bounds.
     measurement = re.compile(

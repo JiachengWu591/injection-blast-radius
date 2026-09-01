@@ -47,6 +47,13 @@ jobs:
         # is not.
         run: python tests/test_suppressions.py
 
+      - name: Architecture — the dependency layering, computed from imports
+        # ARCHITECTURE.md draws a six-layer graph. A drawing goes stale the
+        # first time someone adds an import and nothing fails, which is worse
+        # than no drawing because a reader trusts it. These layers are derived
+        # from the code, so the document cannot quietly start lying.
+        run: coverage run --append --source=ibr tests/test_architecture.py
+
       - name: Phase 0 — sandbox, fixtures, credential hygiene
         run: coverage run --append --source=ibr tests/test_phase0.py
 

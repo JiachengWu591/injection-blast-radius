@@ -79,6 +79,8 @@ _Posted automatically by the triage assistant._
 
 完整的设计理由、数据契约、以及本项目遵循的 fail-closed 规则见 [PROJECT_SPEC.md](./PROJECT_SPEC.md)。
 
+这个包如何分层、以及接入真实数据要改的三个接缝，见 [ARCHITECTURE.zh-CN.md](./ARCHITECTURE.zh-CN.md)。
+
 ## 结构性边界具体在哪几行
 
 "结构层把破坏范围摁住了"这种说法，只有在你能指出实现它的那几行时才有价值。四个地方：

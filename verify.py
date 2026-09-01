@@ -32,6 +32,7 @@ ROOT = Path(__file__).resolve().parent
 PYTHON = sys.executable
 
 OFFLINE_SUITES = (
+    ("tests/test_architecture.py", ()),
     ("tests/test_phase0.py", ()),
     ("tests/test_phase2.py", ("--offline",)),
     ("tests/test_phase3.py", ("--offline",)),

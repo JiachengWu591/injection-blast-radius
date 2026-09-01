@@ -94,6 +94,8 @@ The defense is layered from **two different materials**, not one stacked three t
 
 Full design rationale, data contracts, and the fail-closed rules this project follows: [PROJECT_SPEC.md](./PROJECT_SPEC.md).
 
+How the package is layered, and the three seams to change when pointing this at real data: [ARCHITECTURE.md](./ARCHITECTURE.md).
+
 ## Where the structural boundary actually is
 
 A claim like "the structural layer contains the blast radius" is only worth
