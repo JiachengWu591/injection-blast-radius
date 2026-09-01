@@ -1,0 +1,73 @@
+# One command from an empty machine to a running demo.
+#
+#     mise run demo
+#
+# mise installs the pinned Python and uv, creates .venv, installs the
+# dependencies, and runs the full comparison from recorded API exchanges — no
+# API key, no network, no manual setup. See README.md "Run it".
+
+[tools]
+# Pinned rather than ">=3.12": this project uses `match` and `is_relative_to`,
+# and the point of the demo is that a reader gets the same result, not a
+# debugging session about their interpreter.
+python = "3.12"
+uv = "latest"
+
+[env]
+# mise creates and activates .venv for every task, so `python` and `uv pip`
+# below are always the project's, never the system's. This is also why none of
+# the tasks need `.venv/Scripts/python.exe` or an `activate` step.
+_.python.venv = { path = ".venv", create = true }
+
+[tasks.setup]
+description = "Create .venv and install the runtime dependencies"
+# `sources`/`outputs` make this a no-op after the first run, so every other
+# task can depend on it without paying for it.
+sources = ["requirements.txt"]
+outputs = { auto = true }
+run = "uv pip install --quiet --requirement requirements.txt"
+
+[tasks."setup:dev"]
+description = "Also install ruff, mypy, coverage and hypothesis"
+# Kept apart from `setup` so running the demo does not drag in the toolchain.
+sources = ["requirements.txt", "requirements-dev.txt"]
+outputs = { auto = true }
+run = "uv pip install --quiet --requirement requirements-dev.txt"
+
+[tasks.demo]
+description = "The whole comparison, from recorded exchanges (no API key needed)"
+depends = ["setup"]
+# The default deliberately needs no key. A demo that a reader cannot run is a
+# claim they have to take on faith, and this project's entire argument is that
+# they should not have to. The output says on its face that it is a replay —
+# see ibr/report.py:Provenance.
+run = "python run_all.py --replay"
+
+[tasks."demo:live"]
+description = "The same comparison against the real API (needs DEEPSEEK_API_KEY, costs money)"
+depends = ["setup"]
+run = "python run_all.py"
+
+[tasks.trace]
+description = "Render the stage-by-stage log from the last run"
+depends = ["setup"]
+run = "python phase3_trace.py"
+
+[tasks.test]
+description = "The offline assertions (no API key needed)"
+depends = ["setup:dev"]
+run = "python verify.py"
+
+[tasks.verify]
+description = "Alias for `test` — the full pre-push gate"
+depends = ["test"]
+
+[tasks.matrix]
+description = "Run every attack technique in the corpus (needs DEEPSEEK_API_KEY, costs money)"
+depends = ["setup"]
+run = "python attack_matrix.py"
+
+[tasks.full]
+description = "Everything that needs no API key: verify, demo, trace"
+depends = ["setup:dev"]
+run = ["python verify.py", "python run_all.py --replay", "python phase3_trace.py"]

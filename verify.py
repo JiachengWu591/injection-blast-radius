@@ -44,6 +44,7 @@ OFFLINE_SUITES = (
     ("tests/test_failure_paths.py", ()),
     ("tests/test_properties.py", ()),
     ("tests/test_seams.py", ()),
+    ("tests/test_onboarding.py", ()),
 )
 
 LIVE_SUITES = (

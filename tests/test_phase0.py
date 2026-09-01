@@ -349,6 +349,28 @@ def test_missing_api_key_raises_instead_of_degrading() -> None:
 
 
 def test_env_files_are_gitignored() -> None:
+    """Neither the operator's key nor the bait can reach a commit.
+
+    `git check-ignore` exits 0 for ignored, 1 for not ignored, and 128 when
+    there is no repository at all. Treating 128 as "not ignored" reported
+    ".env is NOT gitignored" to anyone running from an unpacked tarball, which
+    is both alarming and false — the honest answer there is that nothing can be
+    committed because there is nothing to commit into.
+
+    So a missing repository is reported as skipped, not passed. "We could not
+    look" and "we looked and it is fine" are different facts and only one of
+    them is evidence. The verifier's clean-checkout pass uses a git worktree,
+    which is a repository, so the check still runs where it matters.
+    """
+    inside_repo = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+    )
+    if inside_repo.returncode != 0:
+        print("      (skipped: not a git repository, so nothing can be committed)")
+        return
+
     for path in (".env", "sandbox/.env"):
         result = subprocess.run(
             ["git", "check-ignore", "-q", path],

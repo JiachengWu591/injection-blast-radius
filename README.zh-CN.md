@@ -243,12 +243,44 @@ deepseek-v4-flash minus deepseek-v4-pro, false-negative rate:
 
 ## 试一试
 
+在一台空机器上——一个全新的 Codespace、一台新电脑，没装 Python，也没有 API key：
+
 ```bash
-git clone <this-repo>
-cd injection-blast-radius
-cp .env.example .env          # 然后把你的 DeepSeek API key 粘贴进 .env
-pip install -r requirements.txt
-python run_all.py
+git clone <this-repo> && cd injection-blast-radius
+mise run demo
+```
+
+就这些。[mise](https://mise.jdx.dev) 读 [`mise.toml`](./mise.toml)，装上钉死的 Python 3.12 和 `uv`，建好 `.venv`，装完依赖，然后跑完每一种"架构 × 输入"组合——冷启动大约八秒。它会先要求你 `mise trust` 这份配置，因为配置文件是可以执行命令的。
+
+**不需要 API key**，因为默认的演示回放的是早先录制、并提交在 `tests/cassettes/` 里的交互。**走的是真实代码路径**——同一个审计、同一个 Reader、同一道边界、同一个 Executor、同一次输出审计——但模型的回答来自磁盘，而且终端输出和生成的报告都会把这一点写在明面上。这让那个头条结论**可以逐字节复现，且免费**。
+
+它也有一个值得直说的限度：**回放让你看到的是某个概率层的一个录制样本，而不是那一层的行为。** 本页上面那些实测漏放率来自 2600 次真实调用，回放多少次都得不到它们。
+
+如果你有 [DeepSeek key](https://platform.deepseek.com)：
+
+```bash
+cp .env.example .env          # 把 key 粘贴进去
+mise run demo:live            # 同一套对比，但由真实模型来决定
+```
+
+| 任务 | 作用 | 需要 key |
+|---|---|---|
+| `mise run demo` | 完整对比，来自录制 | 否 |
+| `mise run trace` | 上一次运行的逐阶段 trace | 否 |
+| `mise run test` | 所有推送前检查（约 35 秒） | 否 |
+| `mise run full` | 先 test，再 demo，再 trace | 否 |
+| `mise run demo:live` | 对真实模型跑同一套对比 | 是 |
+| `mise run matrix` | 十二种注入手法打两个架构 | 是 |
+
+用 **GitHub Codespace** 或 VS Code dev container 打开本仓库时，上面这些准备工作会在创建时自动完成（见 [`.devcontainer/`](./.devcontainer/)）；终端一打开就可以直接 `mise run demo`。
+
+### 不用 mise 的话
+
+这里没有任何东西依赖 mise——它只是省掉了准备步骤。等价写法：
+
+```bash
+python -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python run_all.py --replay      # 或者：有 key 的话直接 python run_all.py
 ```
 
 `run_all.py` 会跑完每一种"架构 × 输入"组合，打印一张汇总表，并把完整说明写进 `sandbox/report.md`。
@@ -267,8 +299,9 @@ python run_all.py
 | `python model_comparison.py` | 追问更强的模型是否筛查得更好（650 次调用） |
 | `python tools/make_comparison_svg.py` | 从一次新运行重新生成上面那张图 |
 | `python tests/test_phase2.py --offline` | 结构性断言，不需要 API 调用 |
-| `python verify.py` | 一条命令跑完所有推送前检查（约 25 秒，不需要 key） |
+| `python verify.py` | 一条命令跑完所有推送前检查（约 35 秒，不需要 key） |
 | `python tests/test_replay.py` | 从录制的交互驱动调用 API 的那些路径 |
+| `python run_all.py --replay` | 完整对比，不需要 key、不需要网络 |
 
 Provider 是 [DeepSeek](https://platform.deepseek.com)，走 OpenAI 兼容 API（`deepseek-v4-flash`）；换掉它是 `ibr/config.py` 里的一行改动。
 

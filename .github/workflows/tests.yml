@@ -31,7 +31,10 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt ruff mypy coverage hypothesis
+        # The tool list lives in requirements-dev.txt, not here: CI and a
+        # contributor's machine checking with different tools is a difference
+        # that only shows up as a CI failure nobody can reproduce.
+        run: pip install -r requirements-dev.txt
 
       - name: Lint
         run: ruff check .
@@ -104,6 +107,14 @@ jobs:
         # it. Both were confirmed by breaking the executor and watching exactly
         # the intended assertion fail.
         run: coverage run --append --source=ibr tests/test_seams.py
+
+      - name: Onboarding — the one-command start, and what it may claim
+        # README.md promises `mise run demo` works on an empty machine with no
+        # key. Most of that promise is about someone else's laptop; what runs
+        # here is the part that can be checked — the command exists, the thing
+        # it runs works with the key stripped from the environment, and the
+        # report it produces does not describe replayed rows as a live run.
+        run: coverage run --append --source=ibr tests/test_onboarding.py
 
       - name: Require full coverage of the security-critical modules
         # These are the structural boundary: the schema parsers, the executor

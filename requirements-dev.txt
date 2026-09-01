@@ -1,0 +1,11 @@
+# Everything `python verify.py` needs on top of the runtime dependencies.
+#
+# Separate from requirements.txt so that running the demo does not require the
+# toolchain, and in a file rather than inline in the CI workflow so that CI and
+# a contributor's machine cannot end up checking with different tools.
+-r requirements.txt
+
+ruff
+mypy
+coverage
+hypothesis

@@ -391,12 +391,58 @@ allowed to claim about the system.
 
 ## Try it
 
+On an empty machine — a fresh Codespace, a new laptop, no Python, no API key:
+
 ```bash
-git clone <this-repo>
-cd injection-blast-radius
-cp .env.example .env          # then paste your DeepSeek API key into .env
-pip install -r requirements.txt
-python run_all.py
+git clone <this-repo> && cd injection-blast-radius
+mise run demo
+```
+
+That is the whole thing. [mise](https://mise.jdx.dev) reads
+[`mise.toml`](./mise.toml), installs the pinned Python 3.12 and `uv`, creates
+`.venv`, installs the dependencies, and runs every architecture × input
+combination — about eight seconds from a cold start. It will ask you to
+`mise trust` the config first, because a config file can run commands.
+
+**No API key is needed**, because the default demo replays exchanges recorded
+earlier and committed to `tests/cassettes/`. The code path is the real one — the
+same audit, Reader, boundary, Executor and output audit — but the model's
+answers come from disk, and both the terminal output and the generated report
+say so on their face. That makes the headline result reproducible byte-for-byte
+and free.
+
+It also has a limit worth being plain about: a replay shows you *one recorded
+sample* of a probabilistic layer, not how that layer behaves. The measured miss
+rates further up this page came from 2,600 live calls, and no number of replays
+would produce them.
+
+If you have a [DeepSeek key](https://platform.deepseek.com):
+
+```bash
+cp .env.example .env          # paste your key in
+mise run demo:live            # the same comparison, decided by a real model
+```
+
+| Task | What it does | Key needed |
+|---|---|---|
+| `mise run demo` | The whole comparison, from recordings | no |
+| `mise run trace` | The stage-by-stage trace of the last run | no |
+| `mise run test` | Every pre-push check (~35s) | no |
+| `mise run full` | test, then demo, then trace | no |
+| `mise run demo:live` | The comparison against the real model | yes |
+| `mise run matrix` | Twelve injection techniques, both architectures | yes |
+
+Opening the repo in a **GitHub Codespace** or VS Code dev container runs all of
+that setup on creation ([`.devcontainer/`](./.devcontainer/)); the terminal is
+ready for `mise run demo` when it opens.
+
+### Without mise
+
+Nothing here depends on mise — it only removes the setup steps. The equivalent:
+
+```bash
+python -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python run_all.py --replay      # or: python run_all.py, with a key
 ```
 
 `run_all.py` runs every architecture × input combination, prints a summary
@@ -416,8 +462,9 @@ Other entry points:
 | `python model_comparison.py` | Ask whether a stronger model screens better (650 calls) |
 | `python tools/make_comparison_svg.py` | Regenerate the figure above from a fresh run |
 | `python tests/test_phase2.py --offline` | Structural assertions, no API calls needed |
-| `python verify.py` | Every pre-push check in one command (~25s, no API key) |
+| `python verify.py` | Every pre-push check in one command (~35s, no API key) |
 | `python tests/test_replay.py` | The API-calling paths, from recorded exchanges |
+| `python run_all.py --replay` | The full comparison with no key and no network |
 
 The provider is [DeepSeek](https://platform.deepseek.com) via the
 OpenAI-compatible API (`deepseek-v4-flash`); swapping it is a one-line change
