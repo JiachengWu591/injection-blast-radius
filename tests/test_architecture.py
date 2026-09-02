@@ -177,6 +177,162 @@ def test_the_architecture_document_lists_every_module() -> None:
         assert not missing, f"{doc_name} does not mention: {missing}"
 
 
+# --- the class diagram ------------------------------------------------------
+#
+# Same argument as the layer graph, applied to the UML class diagram: a drawing
+# that nothing checks starts lying the first time a field is renamed, and a
+# reader trusts it. So the diagram's field lists are parsed back out of the
+# markdown and compared against the real classes.
+
+# Every class the diagram draws, and the class it claims to describe.
+DIAGRAMMED_CLASSES: dict[str, str] = {
+    "Issue": "issues",
+    "AuditVerdict": "schemas",
+    "ReaderOutput": "schemas",
+    "ExecutorDecision": "executor",
+    "OutputAuditResult": "output_audit",
+    "RecordedAction": "sinks",
+    "SandboxActionSink": "sinks",
+    "DryRunSink": "sinks",
+    "SandboxIssueSource": "sources",
+    "JsonLinesIssueSource": "sources",
+}
+
+# The two protocols, and the methods the diagram says they require.
+DIAGRAMMED_PROTOCOLS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "ActionSink": ("sinks", ("publish_comment", "add_label")),
+    "IssueSource": ("sources", ("load_issue", "available_issues")),
+}
+
+
+def _class_diagram(doc_name: str) -> str:
+    """The one ```mermaid classDiagram block in a document."""
+    import re
+
+    document = (ROOT / doc_name).read_text(encoding="utf-8")
+    blocks = [
+        body
+        for body in re.findall(r"```mermaid\n(.*?)```", document, re.S)
+        if body.lstrip().startswith("classDiagram")
+    ]
+    assert len(blocks) == 1, (
+        f"{doc_name} has {len(blocks)} mermaid classDiagram blocks, expected 1"
+    )
+    return blocks[0]
+
+
+def _parsed_classes(diagram: str) -> dict[str, dict[str, object]]:
+    """Pull each `class X { ... }` into its stereotype and its field names.
+
+    Methods (anything with parentheses) are skipped: this compares data shape,
+    and a dataclass's fields are the part that silently changes.
+    """
+    import re
+
+    parsed: dict[str, dict[str, object]] = {}
+    for name, body in re.findall(r"class\s+(\w+)\s*\{(.*?)\}", diagram, re.S):
+        stereotype = ""
+        fields: list[str] = []
+        for line in body.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            marker = re.fullmatch(r"<<(.+)>>", line)
+            if marker:
+                stereotype = marker.group(1)
+                continue
+            if "(" in line:  # a method, not a field
+                continue
+            fields.append(line.lstrip("+-#~").split()[-1])
+        parsed[name] = {"stereotype": stereotype, "fields": fields}
+    return parsed
+
+
+def test_the_class_diagram_matches_the_dataclasses() -> None:
+    """Field names, their order, and the frozen claim, against the real classes.
+
+    Order is checked, not just membership. In `ReaderOutput` the order is a
+    design decision — `reasoning` is declared before `suggested_action` so the
+    model states its analysis before committing to a verdict — and a diagram
+    that showed it the other way round would misrepresent the one thing about
+    that class worth explaining.
+    """
+    import dataclasses
+    import importlib
+
+    for doc_name in ("ARCHITECTURE.md", "ARCHITECTURE.zh-CN.md"):
+        parsed = _parsed_classes(_class_diagram(doc_name))
+
+        undrawn = sorted(set(DIAGRAMMED_CLASSES) - set(parsed))
+        assert not undrawn, f"{doc_name}'s class diagram is missing: {undrawn}"
+
+        for class_name, module_name in DIAGRAMMED_CLASSES.items():
+            module = importlib.import_module(f"ibr.{module_name}")
+            real = getattr(module, class_name, None)
+            assert real is not None, (
+                f"{doc_name} draws {class_name}, but ibr.{module_name} has no "
+                "such class. Either the diagram is stale or the class moved."
+            )
+            assert dataclasses.is_dataclass(real), f"{class_name} is not a dataclass"
+
+            declared = parsed[class_name]["fields"]
+            actual = [f.name for f in dataclasses.fields(real)]
+            assert declared == actual, (
+                f"{doc_name}: {class_name} is drawn with fields {declared} but "
+                f"ibr.{module_name}.{class_name} has {actual}. Update the "
+                "diagram in both languages."
+            )
+
+            # The `<<frozen dataclass>>` stereotype is a claim about immutability
+            # and this project leans on it — a frozen contract cannot be edited
+            # after validation, which is half of why the boundary holds.
+            stereotype = parsed[class_name]["stereotype"]
+            if stereotype:
+                frozen_claimed = "frozen" in str(stereotype)
+                frozen_real = bool(real.__dataclass_params__.frozen)
+                assert frozen_claimed == frozen_real, (
+                    f"{doc_name}: {class_name} is drawn as {stereotype!r} but "
+                    f"frozen={frozen_real} in the code"
+                )
+
+
+def test_the_class_diagram_protocols_are_real_protocols() -> None:
+    """`<<interface>>` must mean a runtime_checkable Protocol with those methods.
+
+    The seams are only substitutable because these are structural protocols —
+    an adopter's class satisfies one without importing anything from here. If
+    one silently became an ABC, the diagram's promise would be wrong and every
+    integration instruction in the document with it.
+    """
+    import importlib
+    import typing
+
+    for doc_name in ("ARCHITECTURE.md", "ARCHITECTURE.zh-CN.md"):
+        parsed = _parsed_classes(_class_diagram(doc_name))
+        diagram = _class_diagram(doc_name)
+
+        for name, (module_name, methods) in DIAGRAMMED_PROTOCOLS.items():
+            assert f"class {name}" in diagram, f"{doc_name} does not draw {name}"
+            assert parsed[name]["stereotype"] == "interface", (
+                f"{doc_name}: {name} should be drawn <<interface>>, got "
+                f"{parsed[name]['stereotype']!r}"
+            )
+            protocol = getattr(importlib.import_module(f"ibr.{module_name}"), name)
+            assert typing.is_typeddict(protocol) is False
+            assert getattr(protocol, "_is_protocol", False), (
+                f"ibr.{module_name}.{name} is drawn as an interface but is not "
+                "a typing.Protocol"
+            )
+            assert getattr(protocol, "_is_runtime_protocol", False), (
+                f"{name} is not @runtime_checkable, so isinstance() against it "
+                "would raise — and tests/test_seams.py relies on it"
+            )
+            for method in methods:
+                assert hasattr(protocol, method), (
+                    f"{doc_name} draws {name}.{method}, which does not exist"
+                )
+
+
 def main() -> int:
     tests = [
         (name, fn)

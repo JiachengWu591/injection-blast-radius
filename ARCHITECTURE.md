@@ -10,48 +10,123 @@ The layering is not aspirational. It is computed from the imports by
 [`tests/test_architecture.py`](tests/test_architecture.py), which fails if a
 module ever imports from a layer above its own.
 
-## The dependency graph
+## The package diagram
 
-Seven layers, no cycles. Each module depends only on layers below it. The
-drawing shows the shape and omits some edges for legibility; the test computes
-the real thing.
+Seven layers, no cycles, 18 modules. Arrows are UML dependencies: each points
+**from a module to what it imports**, so every arrow runs downward and none may
+run up. Red is the pair the security claim rests on; blue is the two seams you
+replace to point this at real data.
 
+Every edge below is real — this is the graph
+[`tests/test_architecture.py`](tests/test_architecture.py) computes from the
+imports, not a simplification of it. The edges into `config` and `fixtures` are
+dotted only because eleven modules read paths and constants from them and solid
+lines would bury everything else.
+
+```mermaid
+flowchart TD
+    classDef trust fill:#fdeaea,stroke:#c0392b,stroke-width:3px,color:#7b241c
+    classDef seam fill:#e8f1fd,stroke:#2471a3,stroke-width:3px,color:#1a5276
+    classDef ambient fill:#f4f6f6,stroke:#aab7b8,stroke-dasharray:4 3,color:#566573
+    classDef harness fill:#f5eef8,stroke:#8e44ad,color:#5b2c6f
+    classDef plain fill:#fdfefe,stroke:#5d6d7e,color:#212f3d
+
+    subgraph l6["layer 6"]
+        report["<b>report</b><br/>terminal + markdown rendering"]
+    end
+    subgraph l5["layer 5 &middot; measurement, not architecture"]
+        comparison["<b>comparison</b><br/>the six-scenario matrix"]
+        variance["<b>variance</b><br/>sampling, Wilson/Newcombe"]
+    end
+    subgraph l4["layer 4 &middot; the defended path"]
+        pipeline["<b>pipeline</b><br/>audit &rarr; Reader &rarr; BOUNDARY &rarr; Executor &rarr; output audit"]
+    end
+    subgraph l3["layer 3 &middot; the agents"]
+        executor["<b>executor</b><br/>holds the permissions<br/>reads two enum fields"]
+        baseline_agent["<b>baseline_agent</b><br/>undefended: reads, reads files, publishes"]
+        sources["<b>sources</b><br/>SEAM 1 &middot; where issues come from"]
+        attack_corpus["<b>attack_corpus</b><br/>twelve injection techniques"]
+    end
+    subgraph l2["layer 2 &middot; the surfaces"]
+        sinks["<b>sinks</b><br/>SEAM 2 &middot; where actions land"]
+        issues["<b>issues</b><br/>the Issue contract + one validator"]
+        observability["<b>observability</b><br/>one JSONL row per stage"]
+        bootstrap["<b>bootstrap</b><br/>sandbox tree + bait file"]
+    end
+    subgraph l1["layer 1"]
+        llm["<b>llm</b><br/>the only module that knows the API exists"]
+        sandbox_fs["<b>sandbox_fs</b><br/>the path whitelist"]
+    end
+    subgraph l0["layer 0 &middot; no dependencies at all"]
+        schemas["<b>schemas</b><br/>THE STRUCTURAL BOUNDARY<br/>untrusted bytes &rarr; validated value"]
+        output_audit["<b>output_audit</b><br/>regex + entropy secret scan"]
+        config["<b>config</b><br/>paths &middot; model ids &middot; credentials"]
+        fixtures["<b>fixtures</b><br/>the demo's fake secret"]
+    end
+
+    report --> comparison
+    comparison --> pipeline
+    comparison --> baseline_agent
+    comparison --> executor
+    comparison --> bootstrap
+    comparison --> issues
+    comparison --> observability
+    comparison --> schemas
+    comparison --> sandbox_fs
+    variance --> pipeline
+    variance --> issues
+    variance --> schemas
+    pipeline --> executor
+    pipeline --> sinks
+    pipeline --> schemas
+    pipeline --> issues
+    pipeline --> llm
+    pipeline --> observability
+    executor --> schemas
+    executor --> output_audit
+    executor --> sinks
+    baseline_agent --> llm
+    baseline_agent --> issues
+    baseline_agent --> observability
+    baseline_agent --> sandbox_fs
+    sources --> issues
+    sources --> sandbox_fs
+    attack_corpus --> issues
+    sinks --> sandbox_fs
+    issues --> sandbox_fs
+    observability --> sandbox_fs
+    bootstrap --> sandbox_fs
+    llm -.-> config
+    sandbox_fs -.-> config
+    bootstrap -.-> fixtures
+    comparison -.-> fixtures
+    report -.-> fixtures
+
+    class schemas trust
+    class executor trust
+    class sinks seam
+    class sources seam
+    class config ambient
+    class fixtures ambient
+    class report harness
+    class comparison harness
+    class variance harness
+    class attack_corpus harness
+    class pipeline plain
+    class baseline_agent plain
+    class issues plain
+    class observability plain
+    class bootstrap plain
+    class llm plain
+    class sandbox_fs plain
+    class output_audit trust
 ```
-layer 0   config          schemas          output_audit      fixtures
-          (paths, ids,    (data contracts, (regex + entropy   (the demo's
-           credentials)    the boundary)    scanning)          fake secret)
-             │                   │                 │
-             ▼                   │                 │
-layer 1   llm      sandbox_fs    │                 │
-          (provider (the         │                 │
-           client)   whitelist)  │                 │
-                        │        │                 │
-             ┌──────────┼────────┼─────────────────┼─────┐
-             ▼          ▼        │                 │     ▼
-layer 2   bootstrap  issues   observability        │   sinks
-          (sandbox   (default  (JSONL logging)     │   (where actions
-           setup)     source)                      │    land)
-                        │  │                       │     │
-             ┌──────────┘  └────────┐              └─────┤
-             ▼                      ▼                    ▼
-layer 3   attack_corpus  sources  baseline_agent     executor
-          (injection     (the     (undefended,       (permissions,
-           techniques)    seam)    one agent)         enum-only)
-                                        │                 │
-                                        │                 ▼
-layer 4                                 │              pipeline
-                                        │              (audit → reader →
-                                        │               BOUNDARY → executor)
-                                        └────────┬────────┴───────┐
-                                                 ▼                ▼
-layer 5                                     comparison         variance
-                                            (scenario          (sampling,
-                                             matrix)            statistics)
-                                                 │
-                                                 ▼
-layer 6                                       report
-                                              (rendering)
-```
+
+The shape worth noticing: **`executor` — the module that holds every permission
+— has exactly three arrows out of it**, and all three land on layer 0 or the
+sink protocol. It does not know where issues come from, how the model is
+called, or what gets logged. That is not tidiness; it is why substituting a
+source or a sink cannot widen what the executor can be made to do.
 
 ## What each layer is for
 
@@ -110,6 +185,166 @@ cannot reach back into the decision.
 `comparison` runs the scenario matrix, `variance` samples the audit and computes
 Wilson/Newcombe intervals, `report` renders both. None of it is needed to adopt
 the architecture; it exists to measure it.
+
+## The class diagram
+
+Six frozen dataclasses, two protocols, and four implementations. Everything
+that crosses a stage boundary in this project is one of these — there is no
+dict passed between stages anywhere, which is what makes "the boundary is these
+lines" a statement you can check rather than a claim.
+
+The field lists below are checked against the real `dataclasses.fields()` by
+`test_the_class_diagram_matches_the_dataclasses`, so this diagram cannot
+describe a class that has changed shape.
+
+```mermaid
+classDiagram
+    direction LR
+
+    class Issue {
+        <<frozen dataclass>>
+        +str issue_id
+        +str title
+        +str author
+        +str body
+    }
+
+    class AuditVerdict {
+        <<frozen dataclass>>
+        +str reasoning
+        +str risk_level
+        +tuple~str~ matched_patterns
+        +bool completed
+    }
+
+    class ReaderOutput {
+        <<frozen dataclass>>
+        +str reasoning
+        +str issue_type
+        +str summary
+        +str suggested_action
+    }
+
+    class ExecutorDecision {
+        <<frozen dataclass>>
+        +str action_taken
+        +Optional~str~ published_comment
+        +tuple~str~ labels_added
+        +Optional~OutputAuditResult~ output_audit
+        +str note
+    }
+
+    class OutputAuditResult {
+        <<frozen dataclass>>
+        +bool blocked
+        +tuple~str~ findings
+        +summary() str
+    }
+
+    class IssueSource {
+        <<interface>>
+        +load_issue(name) Issue
+        +available_issues() list
+    }
+    class SandboxIssueSource {
+        +Path directory
+    }
+    class JsonLinesIssueSource {
+        +Path path
+    }
+
+    class ActionSink {
+        <<interface>>
+        +publish_comment(issue_id, body) None
+        +add_label(issue_id, label) None
+    }
+    class SandboxActionSink {
+        +str surface
+    }
+    class DryRunSink {
+        <<dataclass>>
+        +list~RecordedAction~ actions
+    }
+    class RecordedAction {
+        <<frozen dataclass>>
+        +str kind
+        +str issue_id
+        +str payload
+    }
+
+    IssueSource <|.. SandboxIssueSource : realises
+    IssueSource <|.. JsonLinesIssueSource : realises
+    IssueSource ..> Issue : produces
+    ActionSink <|.. SandboxActionSink : realises
+    ActionSink <|.. DryRunSink : realises
+    DryRunSink o-- RecordedAction : records
+    ExecutorDecision --> OutputAuditResult : carries
+```
+
+Both protocols are `typing.Protocol` and `@runtime_checkable`, so realisation
+is **structural, not declared**: an adopter's own class satisfies `ActionSink`
+without importing anything from this package, and
+`test_a_hand_written_sink_satisfies_the_protocol_structurally` proves it with a
+class defined inside the test.
+
+Two implementations each, not one. A protocol with a single implementation is
+indistinguishable from a description of that implementation, and every seam
+assertion that matters runs against the *non-default* one.
+
+### Where the boundary actually is
+
+The class diagram cannot express the load-bearing fact, because UML has no way
+to say "this consumer reads only some of that type's fields". `ReaderOutput`
+has four fields; the Executor reads two:
+
+```mermaid
+flowchart LR
+    classDef danger fill:#fdeaea,stroke:#c0392b,stroke-width:2px,color:#7b241c
+    classDef safe fill:#eafaf1,stroke:#1e8449,stroke-width:2px,color:#145a32
+    classDef dead fill:#f4f6f6,stroke:#aab7b8,stroke-dasharray:4 3,color:#566573
+
+    subgraph reader["Reader &middot; has seen the attack, has no tools"]
+        rr["reasoning<br/><i>free text, attacker-controlled</i>"]
+        rs["summary<br/><i>free text, attacker-controlled</i>"]
+        rt["issue_type<br/><b>one of 4</b>"]
+        ra["suggested_action<br/><b>one of 4</b>"]
+    end
+
+    log["observability<br/><i>logged, never branched on</i>"]
+    void["never read by the Executor"]
+    ex["<b>Executor</b><br/>holds every permission"]
+    tpl["COMMENT_TEMPLATES<br/><i>4 static strings, no interpolation</i>"]
+    out["public surface"]
+
+    rr --> log
+    rs --> log
+    rr --x void
+    rs --x void
+    rt --> ex
+    ra --> ex
+    ex --> tpl
+    tpl --> out
+
+    class rr danger
+    class rs danger
+    class rt safe
+    class ra safe
+    class void dead
+    class log dead
+    class ex safe
+    class tpl safe
+    class out safe
+```
+
+A fully captured Reader gets to pick one of four actions and one of four issue
+types. Sixteen combinations, enumerated before the attacker arrived. The two
+fields it can write anything at all into reach the log and nothing else —
+[`ibr/executor.py:119`](ibr/executor.py#L119) is the `match`, and the whole file
+never mentions `reasoning` or `summary` outside the logging record.
+
+That is the difference between the two materials: the audit *probably* stops an
+attack; this *bounds* what any attack can accomplish, and the bound does not
+move when the attacker gets better.
 
 ## Reading order
 

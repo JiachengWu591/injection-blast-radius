@@ -13,6 +13,7 @@ Run standalone:
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -197,6 +198,48 @@ def test_documentation_line_citations_still_point_at_the_right_code() -> None:
         )
 
 
+def _mermaid_skeleton(body: str) -> str:
+    """The graph a mermaid block claims, with its prose stripped out.
+
+    Node labels and relationship captions are prose: a Chinese reader should
+    get Chinese ones. Everything else — the diagram type, the node and subgraph
+    ids, the arrows, the class members, the styling — is a claim about the
+    code, and two languages making different claims about the code is the same
+    defect as two READMEs quoting different miss rates.
+
+    Stripping is by shape rather than by language, so it cannot be fooled by a
+    label that happens to be ASCII.
+    """
+    text = re.sub(r'"[^"]*"', '""', body)  # "node labels"
+    text = re.sub(r"\[[^\]]*\]", "[]", text)  # [square-bracket labels]
+    text = re.sub(r"\|[^|]*\|", "||", text)  # |edge labels|
+    # ` : caption` on a classDiagram relationship. Requires the space, so
+    # `fill:#fdeaea` in a classDef is compared rather than discarded.
+    text = re.sub(r"\s:\s[^\n]*", " : _", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _comparable_blocks(text: str) -> list[tuple[str, str]]:
+    """Every fenced block, reduced to the part that must not differ.
+
+    The language tag travels with each block, so a diagram present in only one
+    translation, or two blocks in a different order, fails rather than passing
+    on a coincidence.
+
+    For a command block, only comments set off by two or more spaces are
+    stripped — so a `#` inside recorded output ("comment on issue #malicious")
+    is left alone.
+    """
+    blocks: list[tuple[str, str]] = []
+    for language, body in re.findall(r"```([a-z]*)\n(.*?)```", text, re.S):
+        if language == "mermaid":
+            blocks.append((language, _mermaid_skeleton(body)))
+        else:
+            stripped = re.sub(r"[ \t]{2,}#.*$", "", body, flags=re.M)
+            blocks.append((language, stripped.rstrip()))
+    return blocks
+
+
 def test_the_translations_report_the_same_numbers() -> None:
     """A translation rots by having one side's figures updated and not the other.
 
@@ -230,22 +273,15 @@ def test_the_translations_report_the_same_numbers() -> None:
         english = (root / english_name).read_text(encoding="utf-8")
         translated = (root / translated_name).read_text(encoding="utf-8")
 
-        # Commands and terminal output must match; the inline comments beside
-        # a command are prose and should be localised. Only comments set off
-        # by two or more spaces are stripped, so a `#` inside recorded output
-        # ("comment on issue #malicious") is left alone.
-        def _commands_only(text: str) -> list[str]:
-            blocks = re.findall(r"```[a-z]*\n(.*?)```", text, re.S)
-            return [re.sub(r"[ \t]{2,}#.*$", "", b, flags=re.M).rstrip() for b in blocks]
-
-        english_blocks = _commands_only(english)
-        translated_blocks = _commands_only(translated)
+        english_blocks = _comparable_blocks(english)
+        translated_blocks = _comparable_blocks(translated)
         assert english_blocks and translated_blocks
         assert english_blocks == translated_blocks, (
-            f"{translated_name}: a command or a line of terminal output "
-            f"differs from {english_name}. Comments beside a command may be "
-            "translated; what the reader is told to run, and what they are "
-            "shown as the result, may not differ between languages."
+            f"{translated_name}: a fenced block differs from {english_name} in "
+            "a way that is not translation. Commands, terminal output, and the "
+            "structure of a diagram may not differ between languages; only "
+            "prose may — comments beside a command, and labels inside a "
+            "diagram."
         )
 
         english_numbers = sorted(set(measurement.findall(english)))
