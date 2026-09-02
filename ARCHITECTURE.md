@@ -197,10 +197,13 @@ The field lists below are checked against the real `dataclasses.fields()` by
 `test_the_class_diagram_matches_the_dataclasses`, so this diagram cannot
 describe a class that has changed shape.
 
+Types are written plainly rather than in UML generic notation, because
+`tuple~str~` is the syntax GitHub's renderer chokes on. Read `tuple` as
+`tuple[str, ...]` and `list` as `list[RecordedAction]`; `published_comment` and
+`output_audit` are `None` unless the run actually published something.
+
 ```mermaid
 classDiagram
-    direction LR
-
     class Issue {
         <<frozen>>
         +str issue_id
@@ -213,7 +216,7 @@ classDiagram
         <<frozen>>
         +str reasoning
         +str risk_level
-        +tuple~str~ matched_patterns
+        +tuple matched_patterns
         +bool completed
     }
 
@@ -228,16 +231,16 @@ classDiagram
     class ExecutorDecision {
         <<frozen>>
         +str action_taken
-        +Optional~str~ published_comment
-        +tuple~str~ labels_added
-        +Optional~OutputAuditResult~ output_audit
+        +str published_comment
+        +tuple labels_added
+        +OutputAuditResult output_audit
         +str note
     }
 
     class OutputAuditResult {
         <<frozen>>
         +bool blocked
-        +tuple~str~ findings
+        +tuple findings
         +summary() str
     }
 
@@ -263,7 +266,7 @@ classDiagram
     }
     class DryRunSink {
         <<mutable>>
-        +list~RecordedAction~ actions
+        +list actions
     }
     class RecordedAction {
         <<frozen>>

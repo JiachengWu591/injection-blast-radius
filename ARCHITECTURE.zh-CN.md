@@ -169,10 +169,10 @@ flowchart TD
 
 下面的字段列表由 `test_the_class_diagram_matches_the_dataclasses` 对着真实的 `dataclasses.fields()` 校验，所以这张图**不可能**描述一个已经改了形状的类。
 
+类型写成朴素形式而不用 UML 泛型记法，因为 `tuple~str~` 那种写法是 GitHub 渲染器咽不下去的东西。请把 `tuple` 读作 `tuple[str, ...]`、`list` 读作 `list[RecordedAction]`；而 `published_comment` 和 `output_audit` 在这次运行确实发布了东西之前都是 `None`。
+
 ```mermaid
 classDiagram
-    direction LR
-
     class Issue {
         <<frozen>>
         +str issue_id
@@ -185,7 +185,7 @@ classDiagram
         <<frozen>>
         +str reasoning
         +str risk_level
-        +tuple~str~ matched_patterns
+        +tuple matched_patterns
         +bool completed
     }
 
@@ -200,16 +200,16 @@ classDiagram
     class ExecutorDecision {
         <<frozen>>
         +str action_taken
-        +Optional~str~ published_comment
-        +tuple~str~ labels_added
-        +Optional~OutputAuditResult~ output_audit
+        +str published_comment
+        +tuple labels_added
+        +OutputAuditResult output_audit
         +str note
     }
 
     class OutputAuditResult {
         <<frozen>>
         +bool blocked
-        +tuple~str~ findings
+        +tuple findings
         +summary() str
     }
 
@@ -235,7 +235,7 @@ classDiagram
     }
     class DryRunSink {
         <<mutable>>
-        +list~RecordedAction~ actions
+        +list actions
     }
     class RecordedAction {
         <<frozen>>

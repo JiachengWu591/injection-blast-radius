@@ -122,6 +122,28 @@ def problems_in(body: str, *, where: str) -> list[str]:
             'mermaid parses as syntax. Wrap it in double quotes.'
         )
 
+    # 5. classDiagram constructs GitHub refuses to render.
+    #
+    #    Found the hard way: the class diagram came back "Unable to render rich
+    #    display" on github.com while parsing AND rendering cleanly under
+    #    mermaid 10.9.8 and 11 locally, with securityLevel 'strict'. These two
+    #    are the only constructs that appeared in that diagram and in neither
+    #    flowchart, so they are the difference — and both are expendable, which
+    #    is cheaper than being right about which one it was.
+    if body.lstrip().startswith("classDiagram"):
+        for generic in sorted(set(re.findall(r"\b\w+~\w+~", body))):
+            found.append(
+                f"{where}: the generic {generic!r} is expanded into literal "
+                "<...> markup when mermaid builds the label, which is the one "
+                "place a classDiagram emits HTML for the sanitiser to handle. "
+                "Write the plain type and put the element type in prose."
+            )
+        for direction in sorted(set(re.findall(r"^\s*(direction\s+\w+)", body, re.M))):
+            found.append(
+                f"{where}: {direction!r} inside a classDiagram is not portable. "
+                "Leave the default orientation."
+            )
+
     return found
 
 
