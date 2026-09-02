@@ -105,6 +105,20 @@ def static_checks(report: Reporter) -> None:
     report.run("mypy", [PYTHON, "-m", "mypy"])
 
 
+def mermaid_lint(report: Reporter) -> None:
+    """Check the diagrams for constructs GitHub's renderer mishandles.
+
+    Added after ARCHITECTURE.md's diagrams came back "Unable to render rich
+    display" on GitHub while parsing cleanly locally: the whole point of
+    choosing mermaid over a committed image was that a reader sees the diagram,
+    and nothing checked that they could.
+    """
+    report.run(
+        "mermaid diagrams are GitHub-renderable",
+        [PYTHON, "tools/check_mermaid.py"],
+    )
+
+
 def offline_with_coverage(report: Reporter) -> None:
     print("\nOffline assertions (with coverage)")
     coverage_file = ROOT / ".coverage"
@@ -238,6 +252,7 @@ def main() -> int:
 
     report = Reporter()
     static_checks(report)
+    mermaid_lint(report)
     offline_with_coverage(report)
     if args.skip_clean:
         report.skip("clean checkout", "--skip-clean")

@@ -27,41 +27,41 @@ lines would bury everything else.
 flowchart TD
     classDef trust fill:#fdeaea,stroke:#c0392b,stroke-width:3px,color:#7b241c
     classDef seam fill:#e8f1fd,stroke:#2471a3,stroke-width:3px,color:#1a5276
-    classDef ambient fill:#f4f6f6,stroke:#aab7b8,stroke-dasharray:4 3,color:#566573
+    classDef ambient fill:#f4f6f6,stroke:#aab7b8,stroke-dasharray:4,color:#566573
     classDef harness fill:#f5eef8,stroke:#8e44ad,color:#5b2c6f
     classDef plain fill:#fdfefe,stroke:#5d6d7e,color:#212f3d
 
     subgraph l6["layer 6"]
-        report["<b>report</b><br/>terminal + markdown rendering"]
+        report["report<br/>terminal + markdown rendering"]
     end
-    subgraph l5["layer 5 &middot; measurement, not architecture"]
-        comparison["<b>comparison</b><br/>the six-scenario matrix"]
-        variance["<b>variance</b><br/>sampling, Wilson/Newcombe"]
+    subgraph l5["layer 5 · measurement, not architecture"]
+        comparison["comparison<br/>the six-scenario matrix"]
+        variance["variance<br/>sampling, Wilson/Newcombe"]
     end
-    subgraph l4["layer 4 &middot; the defended path"]
-        pipeline["<b>pipeline</b><br/>audit &rarr; Reader &rarr; BOUNDARY &rarr; Executor &rarr; output audit"]
+    subgraph l4["layer 4 · the defended path"]
+        pipeline["pipeline<br/>audit → Reader → BOUNDARY → Executor → output audit"]
     end
-    subgraph l3["layer 3 &middot; the agents"]
-        executor["<b>executor</b><br/>holds the permissions<br/>reads two enum fields"]
-        baseline_agent["<b>baseline_agent</b><br/>undefended: reads, reads files, publishes"]
-        sources["<b>sources</b><br/>SEAM 1 &middot; where issues come from"]
-        attack_corpus["<b>attack_corpus</b><br/>twelve injection techniques"]
+    subgraph l3["layer 3 · the agents"]
+        executor["executor<br/>holds the permissions<br/>reads two enum fields"]
+        baseline_agent["baseline_agent<br/>undefended: reads, reads files, publishes"]
+        sources["sources<br/>SEAM 1 · where issues come from"]
+        attack_corpus["attack_corpus<br/>twelve injection techniques"]
     end
-    subgraph l2["layer 2 &middot; the surfaces"]
-        sinks["<b>sinks</b><br/>SEAM 2 &middot; where actions land"]
-        issues["<b>issues</b><br/>the Issue contract + one validator"]
-        observability["<b>observability</b><br/>one JSONL row per stage"]
-        bootstrap["<b>bootstrap</b><br/>sandbox tree + bait file"]
+    subgraph l2["layer 2 · the surfaces"]
+        sinks["sinks<br/>SEAM 2 · where actions land"]
+        issues["issues<br/>the Issue contract + one validator"]
+        observability["observability<br/>one JSONL row per stage"]
+        bootstrap["bootstrap<br/>sandbox tree + bait file"]
     end
     subgraph l1["layer 1"]
-        llm["<b>llm</b><br/>the only module that knows the API exists"]
-        sandbox_fs["<b>sandbox_fs</b><br/>the path whitelist"]
+        llm["llm<br/>the only module that knows the API exists"]
+        sandbox_fs["sandbox_fs<br/>the path whitelist"]
     end
-    subgraph l0["layer 0 &middot; no dependencies at all"]
-        schemas["<b>schemas</b><br/>THE STRUCTURAL BOUNDARY<br/>untrusted bytes &rarr; validated value"]
-        output_audit["<b>output_audit</b><br/>regex + entropy secret scan"]
-        config["<b>config</b><br/>paths &middot; model ids &middot; credentials"]
-        fixtures["<b>fixtures</b><br/>the demo's fake secret"]
+    subgraph l0["layer 0 · no dependencies at all"]
+        schemas["schemas<br/>THE STRUCTURAL BOUNDARY<br/>untrusted bytes → validated value"]
+        output_audit["output_audit<br/>regex + entropy secret scan"]
+        config["config<br/>paths · model ids · credentials"]
+        fixtures["fixtures<br/>the demo's fake secret"]
     end
 
     report --> comparison
@@ -202,7 +202,7 @@ classDiagram
     direction LR
 
     class Issue {
-        <<frozen dataclass>>
+        <<frozen>>
         +str issue_id
         +str title
         +str author
@@ -210,7 +210,7 @@ classDiagram
     }
 
     class AuditVerdict {
-        <<frozen dataclass>>
+        <<frozen>>
         +str reasoning
         +str risk_level
         +tuple~str~ matched_patterns
@@ -218,7 +218,7 @@ classDiagram
     }
 
     class ReaderOutput {
-        <<frozen dataclass>>
+        <<frozen>>
         +str reasoning
         +str issue_type
         +str summary
@@ -226,7 +226,7 @@ classDiagram
     }
 
     class ExecutorDecision {
-        <<frozen dataclass>>
+        <<frozen>>
         +str action_taken
         +Optional~str~ published_comment
         +tuple~str~ labels_added
@@ -235,7 +235,7 @@ classDiagram
     }
 
     class OutputAuditResult {
-        <<frozen dataclass>>
+        <<frozen>>
         +bool blocked
         +tuple~str~ findings
         +summary() str
@@ -262,11 +262,11 @@ classDiagram
         +str surface
     }
     class DryRunSink {
-        <<dataclass>>
+        <<mutable>>
         +list~RecordedAction~ actions
     }
     class RecordedAction {
-        <<frozen dataclass>>
+        <<frozen>>
         +str kind
         +str issue_id
         +str payload
@@ -301,19 +301,19 @@ has four fields; the Executor reads two:
 flowchart LR
     classDef danger fill:#fdeaea,stroke:#c0392b,stroke-width:2px,color:#7b241c
     classDef safe fill:#eafaf1,stroke:#1e8449,stroke-width:2px,color:#145a32
-    classDef dead fill:#f4f6f6,stroke:#aab7b8,stroke-dasharray:4 3,color:#566573
+    classDef dead fill:#f4f6f6,stroke:#aab7b8,stroke-dasharray:4,color:#566573
 
-    subgraph reader["Reader &middot; has seen the attack, has no tools"]
-        rr["reasoning<br/><i>free text, attacker-controlled</i>"]
-        rs["summary<br/><i>free text, attacker-controlled</i>"]
-        rt["issue_type<br/><b>one of 4</b>"]
-        ra["suggested_action<br/><b>one of 4</b>"]
+    subgraph reader["Reader · has seen the attack, has no tools"]
+        rr["reasoning<br/>free text, attacker-controlled"]
+        rs["summary<br/>free text, attacker-controlled"]
+        rt["issue_type<br/>one of 4"]
+        ra["suggested_action<br/>one of 4"]
     end
 
-    log["observability<br/><i>logged, never branched on</i>"]
+    log["observability<br/>logged, never branched on"]
     void["never read by the Executor"]
-    ex["<b>Executor</b><br/>holds every permission"]
-    tpl["COMMENT_TEMPLATES<br/><i>4 static strings, no interpolation</i>"]
+    ex["Executor<br/>holds every permission"]
+    tpl["COMMENT_TEMPLATES<br/>4 static strings, no interpolation"]
     out["public surface"]
 
     rr --> log

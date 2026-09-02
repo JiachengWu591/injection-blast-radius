@@ -16,41 +16,41 @@
 flowchart TD
     classDef trust fill:#fdeaea,stroke:#c0392b,stroke-width:3px,color:#7b241c
     classDef seam fill:#e8f1fd,stroke:#2471a3,stroke-width:3px,color:#1a5276
-    classDef ambient fill:#f4f6f6,stroke:#aab7b8,stroke-dasharray:4 3,color:#566573
+    classDef ambient fill:#f4f6f6,stroke:#aab7b8,stroke-dasharray:4,color:#566573
     classDef harness fill:#f5eef8,stroke:#8e44ad,color:#5b2c6f
     classDef plain fill:#fdfefe,stroke:#5d6d7e,color:#212f3d
 
     subgraph l6["layer 6"]
-        report["<b>report</b><br/>终端表格 + markdown 报告渲染"]
+        report["report<br/>终端表格 + markdown 报告渲染"]
     end
-    subgraph l5["layer 5 &middot; 测量工具，不是架构"]
-        comparison["<b>comparison</b><br/>六场景矩阵"]
-        variance["<b>variance</b><br/>采样，Wilson/Newcombe 区间"]
+    subgraph l5["layer 5 · 测量工具，不是架构"]
+        comparison["comparison<br/>六场景矩阵"]
+        variance["variance<br/>采样，Wilson/Newcombe 区间"]
     end
-    subgraph l4["layer 4 &middot; 被防御的那条路径"]
-        pipeline["<b>pipeline</b><br/>审计 &rarr; Reader &rarr; 边界 &rarr; Executor &rarr; 输出审计"]
+    subgraph l4["layer 4 · 被防御的那条路径"]
+        pipeline["pipeline<br/>审计 → Reader → 边界 → Executor → 输出审计"]
     end
-    subgraph l3["layer 3 &middot; agent 们"]
-        executor["<b>executor</b><br/>持有全部权限<br/>只读两个枚举字段"]
-        baseline_agent["<b>baseline_agent</b><br/>未防御：读文本、读文件、对外发布"]
-        sources["<b>sources</b><br/>接缝 1 &middot; issue 从哪来"]
-        attack_corpus["<b>attack_corpus</b><br/>十二种注入技术"]
+    subgraph l3["layer 3 · agent 们"]
+        executor["executor<br/>持有全部权限<br/>只读两个枚举字段"]
+        baseline_agent["baseline_agent<br/>未防御：读文本、读文件、对外发布"]
+        sources["sources<br/>接缝 1 · issue 从哪来"]
+        attack_corpus["attack_corpus<br/>十二种注入技术"]
     end
-    subgraph l2["layer 2 &middot; 各个面"]
-        sinks["<b>sinks</b><br/>接缝 2 &middot; 动作落到哪里"]
-        issues["<b>issues</b><br/>Issue 契约 + 唯一的校验器"]
-        observability["<b>observability</b><br/>每阶段一条 JSONL"]
-        bootstrap["<b>bootstrap</b><br/>沙箱目录树 + 诱饵文件"]
+    subgraph l2["layer 2 · 各个面"]
+        sinks["sinks<br/>接缝 2 · 动作落到哪里"]
+        issues["issues<br/>Issue 契约 + 唯一的校验器"]
+        observability["observability<br/>每阶段一条 JSONL"]
+        bootstrap["bootstrap<br/>沙箱目录树 + 诱饵文件"]
     end
     subgraph l1["layer 1"]
-        llm["<b>llm</b><br/>唯一知道 API 存在的模块"]
-        sandbox_fs["<b>sandbox_fs</b><br/>路径白名单"]
+        llm["llm<br/>唯一知道 API 存在的模块"]
+        sandbox_fs["sandbox_fs<br/>路径白名单"]
     end
-    subgraph l0["layer 0 &middot; 零依赖"]
-        schemas["<b>schemas</b><br/>结构性边界就在这里<br/>不可信字节 &rarr; 已校验的值"]
-        output_audit["<b>output_audit</b><br/>正则 + 熵，扫密钥形状"]
-        config["<b>config</b><br/>路径 &middot; 模型 ID &middot; 凭证"]
-        fixtures["<b>fixtures</b><br/>演示用的假密钥"]
+    subgraph l0["layer 0 · 零依赖"]
+        schemas["schemas<br/>结构性边界就在这里<br/>不可信字节 → 已校验的值"]
+        output_audit["output_audit<br/>正则 + 熵，扫密钥形状"]
+        config["config<br/>路径 · 模型 ID · 凭证"]
+        fixtures["fixtures<br/>演示用的假密钥"]
     end
 
     report --> comparison
@@ -174,7 +174,7 @@ classDiagram
     direction LR
 
     class Issue {
-        <<frozen dataclass>>
+        <<frozen>>
         +str issue_id
         +str title
         +str author
@@ -182,7 +182,7 @@ classDiagram
     }
 
     class AuditVerdict {
-        <<frozen dataclass>>
+        <<frozen>>
         +str reasoning
         +str risk_level
         +tuple~str~ matched_patterns
@@ -190,7 +190,7 @@ classDiagram
     }
 
     class ReaderOutput {
-        <<frozen dataclass>>
+        <<frozen>>
         +str reasoning
         +str issue_type
         +str summary
@@ -198,7 +198,7 @@ classDiagram
     }
 
     class ExecutorDecision {
-        <<frozen dataclass>>
+        <<frozen>>
         +str action_taken
         +Optional~str~ published_comment
         +tuple~str~ labels_added
@@ -207,7 +207,7 @@ classDiagram
     }
 
     class OutputAuditResult {
-        <<frozen dataclass>>
+        <<frozen>>
         +bool blocked
         +tuple~str~ findings
         +summary() str
@@ -234,11 +234,11 @@ classDiagram
         +str surface
     }
     class DryRunSink {
-        <<dataclass>>
+        <<mutable>>
         +list~RecordedAction~ actions
     }
     class RecordedAction {
-        <<frozen dataclass>>
+        <<frozen>>
         +str kind
         +str issue_id
         +str payload
@@ -265,19 +265,19 @@ classDiagram
 flowchart LR
     classDef danger fill:#fdeaea,stroke:#c0392b,stroke-width:2px,color:#7b241c
     classDef safe fill:#eafaf1,stroke:#1e8449,stroke-width:2px,color:#145a32
-    classDef dead fill:#f4f6f6,stroke:#aab7b8,stroke-dasharray:4 3,color:#566573
+    classDef dead fill:#f4f6f6,stroke:#aab7b8,stroke-dasharray:4,color:#566573
 
-    subgraph reader["Reader &middot; 已经看过攻击，但没有任何工具"]
-        rr["reasoning<br/><i>自由文本，攻击者可控</i>"]
-        rs["summary<br/><i>自由文本，攻击者可控</i>"]
-        rt["issue_type<br/><b>四选一</b>"]
-        ra["suggested_action<br/><b>四选一</b>"]
+    subgraph reader["Reader · 已经看过攻击，但没有任何工具"]
+        rr["reasoning<br/>自由文本，攻击者可控"]
+        rs["summary<br/>自由文本，攻击者可控"]
+        rt["issue_type<br/>四选一"]
+        ra["suggested_action<br/>四选一"]
     end
 
-    log["observability<br/><i>只记日志，从不参与分支</i>"]
+    log["observability<br/>只记日志，从不参与分支"]
     void["Executor 从不读取"]
-    ex["<b>Executor</b><br/>持有全部权限"]
-    tpl["COMMENT_TEMPLATES<br/><i>4 个静态字符串，不做任何插值</i>"]
+    ex["Executor<br/>持有全部权限"]
+    tpl["COMMENT_TEMPLATES<br/>4 个静态字符串，不做任何插值"]
     out["公开面"]
 
     rr --> log
