@@ -42,6 +42,16 @@ jobs:
       - name: Type check
         run: mypy
 
+      - name: The diagrams stay renderable on GitHub
+        # ARCHITECTURE.md's class diagram once came back "Unable to render rich
+        # display" here while parsing and rendering fine locally under mermaid
+        # 9.4.3, 10.9.8 and 11. The lint was added to stop that recurring — and
+        # it was only wired into verify.py, so a contributor who did not run
+        # verify.py could have reintroduced the same construct and CI would
+        # have passed it. A regression guard that does not run where changes
+        # arrive is not a guard.
+        run: python tools/check_mermaid.py
+
       - name: Every type-checker suppression is registered with a reason
         # A `# type: ignore` on a whole call once collapsed a response object
         # to Any and switched off checking for everything derived from it,
