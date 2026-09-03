@@ -523,6 +523,8 @@ mise run demo:live            # the same comparison, decided by a real model
 | `mise run full` | test, then demo, then trace | no |
 | `mise run demo:live` | The comparison against the real model | yes |
 | `mise run matrix` | Twelve injection techniques, both architectures | yes |
+| `mise run fp-rate` | The audit's false-positive rate over 165 issues (~$0.05) | yes |
+| `mise run dry-run` | The corpus through the pipeline, publishing nothing (~$0.15) | yes |
 
 Opening the repo in a **GitHub Codespace** or VS Code dev container runs all of
 that setup on creation ([`.devcontainer/`](./.devcontainer/)); the terminal is

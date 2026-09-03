@@ -67,6 +67,20 @@ description = "Run every attack technique in the corpus (needs DEEPSEEK_API_KEY,
 depends = ["setup"]
 run = "python attack_matrix.py"
 
+[tasks."fp-rate"]
+description = "Measure the audit's false-positive rate over 165 issues (needs DEEPSEEK_API_KEY, ~$0.05)"
+depends = ["setup"]
+# Resumable: already-stored verdicts count toward the target, so a re-run after
+# an interruption pays only for the shortfall.
+run = "python false_positive_rate.py"
+
+[tasks."dry-run"]
+description = "Run the corpus through the pipeline publishing nothing (needs DEEPSEEK_API_KEY, ~$0.15)"
+depends = ["setup"]
+# The one that answers "what would it have done" against real input. Asserts
+# afterwards that no public surface changed.
+run = "python batch_dry_run.py"
+
 [tasks.full]
 description = "Everything that needs no API key: verify, demo, trace"
 depends = ["setup:dev"]

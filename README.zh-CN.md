@@ -320,6 +320,8 @@ mise run demo:live            # 同一套对比，但由真实模型来决定
 | `mise run full` | 先 test，再 demo，再 trace | 否 |
 | `mise run demo:live` | 对真实模型跑同一套对比 | 是 |
 | `mise run matrix` | 十二种注入手法打两个架构 | 是 |
+| `mise run fp-rate` | 在 165 个 issue 上测审计的误报率（约 $0.05） | 是 |
+| `mise run dry-run` | 把语料跑过流水线但不发布任何东西（约 $0.15） | 是 |
 
 用 **GitHub Codespace** 或 VS Code dev container 打开本仓库时，上面这些准备工作会在创建时自动完成（见 [`.devcontainer/`](./.devcontainer/)）；终端一打开就可以直接 `mise run demo`。
 

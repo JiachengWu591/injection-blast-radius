@@ -37,6 +37,8 @@ DOCUMENTED_TASKS = {
     "test": False,
     "full": False,
     "matrix": True,
+    "fp-rate": True,
+    "dry-run": True,
 }
 
 
@@ -81,6 +83,8 @@ def test_the_keyless_tasks_do_not_call_the_api() -> None:
     live_scripts = {
         "run_all.py",
         "attack_matrix.py",
+        "false_positive_rate.py",
+        "batch_dry_run.py",
         "audit_variance.py",
         "model_comparison.py",
         "phase0_smoke.py",
