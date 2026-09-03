@@ -109,7 +109,7 @@ predefined actions, and that set doesn't grow when the attacker gets smarter.
 
 Point at the code while saying it —
 [`ibr/executor.py:119`](ibr/executor.py#L119) for the `match`,
-[`ibr/pipeline.py:369`](ibr/pipeline.py#L369) for the crossing point.
+[`ibr/pipeline.py:385`](ibr/pipeline.py#L385) for the crossing point.
 
 If you want the strongest version of the claim, run it with no network at all:
 

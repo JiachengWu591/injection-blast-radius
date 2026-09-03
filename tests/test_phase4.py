@@ -178,6 +178,19 @@ def test_documentation_line_citations_still_point_at_the_right_code() -> None:
                 f"{doc_name} cites {rel}#L{start}"
                 f"{'-L' + end if end else ''} but the file has {len(lines)} lines"
             )
+            # Existing is not the same as still-correct. A citation that has
+            # drifted usually lands on structural filler — a closing bracket, a
+            # blank line — because that is most of what a Python file is made
+            # of. README.md's "crossing point" link rotted to `),` when tokens
+            # were threaded through the pipeline, and the anchors table below
+            # did not cover it, so nothing failed. This is the general version:
+            # a cited line must carry something nameable.
+            cited = lines[start - 1].strip()
+            assert re.search(r"[A-Za-z_]{3,}", cited), (
+                f"{doc_name} cites {rel}#L{start}, which is {cited!r} — "
+                "structural filler, not code a reader was sent to look at. The "
+                "citation has almost certainly drifted."
+            )
             checked += 1
     assert checked >= 5, f"expected several code citations, found {checked}"
 
@@ -190,6 +203,12 @@ def test_documentation_line_citations_still_point_at_the_right_code() -> None:
         ("ibr/executor.py", 119): "match action:",
         ("ibr/pipeline.py", 385): "The structured boundary",
         ("ibr/baseline_agent.py", 149): "def _post_comment_impl",
+        # The primitives README.md's schema row points at, and the enum tuple
+        # the whitelist is built from. Both are cited in the "where the
+        # structural boundary actually is" table and neither was pinned, which
+        # is how the crossing-point link rotted unnoticed.
+        ("ibr/schemas.py", 185): "def ",
+        ("ibr/executor.py", 164): "no_action",
     }
     for (rel, line_no), expected in anchors.items():
         line = (root / rel).read_text(encoding="utf-8").splitlines()[line_no - 1]
