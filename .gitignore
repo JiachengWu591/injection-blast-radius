@@ -23,6 +23,7 @@ sandbox/.env
 sandbox/public_comments.txt
 sandbox/labels.txt
 sandbox/report.md
+sandbox/batch_report.md
 sandbox/attack_matrix.md
 sandbox/audit_variance.md
 sandbox/model_comparison.md
