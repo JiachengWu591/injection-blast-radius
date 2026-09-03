@@ -83,6 +83,10 @@ class StageRecord:
     output_summary: str = ""
     verdict_field: str | None = None
     attempts: int | None = None
+    # Zero on the stages that make no call — the short-circuit, the boundary,
+    # the executor — so a run's cost is a plain sum with no special cases.
+    input_tokens: int = 0
+    output_tokens: int = 0
     ts: str = field(default_factory=utc_now)
 
 
@@ -136,6 +140,8 @@ def _emit_log(result: PipelineResult, architecture: str = "isolated") -> None:
                 else None
             ),
             attempts=stage.attempts,
+            input_tokens=stage.input_tokens,
+            output_tokens=stage.output_tokens,
         )
         for stage in result.stages
     ]
@@ -287,6 +293,8 @@ def run_isolated(
             ),
             verdict_field="risk_level",
             attempts=call.attempts,
+            input_tokens=call.input_tokens,
+            output_tokens=call.output_tokens,
         )
     )
 
@@ -369,6 +377,8 @@ def run_isolated(
             ),
             verdict_field="suggested_action",
             attempts=call.attempts,
+            input_tokens=call.input_tokens,
+            output_tokens=call.output_tokens,
         )
     )
 

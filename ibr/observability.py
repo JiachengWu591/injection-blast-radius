@@ -85,6 +85,10 @@ class LogRecord:
     risk_level: str | None = None
     reasoning_first: bool | None = None
     attempts: int | None = None
+    # Zero rather than None when a stage made no call, so summing a run's cost
+    # never has to special-case the short-circuit and the deterministic paths.
+    input_tokens: int = 0
+    output_tokens: int = 0
 
     def to_json(self) -> str:
         payload = asdict(self)

@@ -8,7 +8,7 @@
 
 ## 包图
 
-七层，无环，18 个模块。箭头是 UML 依赖：每根都**从一个模块指向它 import 的东西**，所以所有箭头都朝下，一根都不许朝上。红色是安全主张所依赖的那一对，蓝色是接生产数据时你要替换的两个接缝。
+七层，无环，19 个模块。箭头是 UML 依赖：每根都**从一个模块指向它 import 的东西**，所以所有箭头都朝下，一根都不许朝上。红色是安全主张所依赖的那一对，蓝色是接生产数据时你要替换的两个接缝。
 
 **下面每一根边都是真的**——这就是 [`tests/test_architecture.py`](tests/test_architecture.py) 从 import 里算出来的那张图，不是它的简化版。指向 `config` 和 `fixtures` 的边画成虚线，只是因为有十一个模块从它们那里读路径和常量，画实线会把其余一切埋掉。
 
@@ -26,6 +26,7 @@ flowchart TD
     subgraph l5["layer 5 · 测量工具，不是架构"]
         comparison["comparison<br/>六场景矩阵"]
         variance["variance<br/>采样，Wilson/Newcombe 区间"]
+        batch["batch<br/>语料批量运行器：可续跑、幂等"]
     end
     subgraph l4["layer 4 · 被防御的那条路径"]
         pipeline["pipeline<br/>审计 → Reader → 边界 → Executor → 输出审计"]
@@ -63,6 +64,9 @@ flowchart TD
     comparison --> schemas
     comparison --> sandbox_fs
     variance --> pipeline
+    batch --> pipeline
+    batch --> sinks
+    batch --> issues
     variance --> issues
     variance --> schemas
     pipeline --> executor
@@ -100,6 +104,7 @@ flowchart TD
     class report harness
     class comparison harness
     class variance harness
+    class batch plain
     class attack_corpus harness
     class pipeline plain
     class baseline_agent plain
@@ -159,9 +164,19 @@ flowchart TD
 |---|---|
 | `pipeline` | 隔离架构：审计 → Reader → 边界 → Executor → 输出审计。它接收一个 `Issue` 和一个 sink，所以**两个接缝在这里汇合**。 |
 
-### Layer 5–6 —— 研究工具
+### Layer 5 —— 批量运行，以及测量
 
-`comparison` 跑场景矩阵，`variance` 对审计采样并计算 Wilson / Newcombe 区间，`report` 渲染两者。**采用这套架构不需要其中任何一个**——它们的存在是为了测量它。
+| 模块 | 职责 |
+|---|---|
+| `batch` | 把一整个语料跑过流水线：并发、可续跑，而且对结果**三值化**——所以一个错误永远不可能被读成一个决定。这是**生产运行器**，不是测量工具。 |
+| `comparison` | 头条演示背后的六场景矩阵。 |
+| `variance` | 对审计采样，计算 Wilson / Newcombe 区间。 |
+
+`comparison` 和 `variance` 的存在是为了**测量**这套架构，采用它一个都不需要。`batch` 是这一层里你真会留下的那个。
+
+### Layer 6
+
+`report` 把对比结果渲染成终端表格和 markdown 文档。
 
 ## 类图
 

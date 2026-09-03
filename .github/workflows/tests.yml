@@ -144,6 +144,21 @@ jobs:
         # assertions are what replaces that judgement.
         run: coverage run --append --source=ibr tests/test_corpus.py
 
+      - name: Batch runner and the idempotency ledger
+        # Two invariants, failing in opposite directions. An error must never
+        # read as a decision — this project shipped that bug twice, so
+        # IssueOutcome.status has three values rather than two. And an action
+        # must happen exactly once: the ledger writes an intent before the sink
+        # runs and a confirmation after, so an interrupted run leaves a trace
+        # that cannot be resolved by guessing.
+        #
+        # Six deliberate breakages were tried against these. Five fired; the
+        # sixth — deleting the pre-write, which silently turns the ledger
+        # single-phase and makes a resumed run post twice — fired nothing until
+        # test_the_intent_is_on_disk_before_the_inner_sink_runs was added to
+        # watch the ordering from inside the call.
+        run: coverage run --append --source=ibr tests/test_batch.py
+
       - name: Require full coverage of the security-critical modules
         # These are the structural boundary: the schema parsers, the executor
         # whitelist, the sandbox guard, the sink the executor publishes through,

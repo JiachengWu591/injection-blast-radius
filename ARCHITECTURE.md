@@ -12,7 +12,7 @@ module ever imports from a layer above its own.
 
 ## The package diagram
 
-Seven layers, no cycles, 18 modules. Arrows are UML dependencies: each points
+Seven layers, no cycles, 19 modules. Arrows are UML dependencies: each points
 **from a module to what it imports**, so every arrow runs downward and none may
 run up. Red is the pair the security claim rests on; blue is the two seams you
 replace to point this at real data.
@@ -37,6 +37,7 @@ flowchart TD
     subgraph l5["layer 5 · measurement, not architecture"]
         comparison["comparison<br/>the six-scenario matrix"]
         variance["variance<br/>sampling, Wilson/Newcombe"]
+        batch["batch<br/>corpus runner: resumable, idempotent"]
     end
     subgraph l4["layer 4 · the defended path"]
         pipeline["pipeline<br/>audit → Reader → BOUNDARY → Executor → output audit"]
@@ -74,6 +75,9 @@ flowchart TD
     comparison --> schemas
     comparison --> sandbox_fs
     variance --> pipeline
+    batch --> pipeline
+    batch --> sinks
+    batch --> issues
     variance --> issues
     variance --> schemas
     pipeline --> executor
@@ -111,6 +115,7 @@ flowchart TD
     class report harness
     class comparison harness
     class variance harness
+    class batch plain
     class attack_corpus harness
     class pipeline plain
     class baseline_agent plain
@@ -180,11 +185,20 @@ cannot reach back into the decision.
 |---|---|
 | `pipeline` | The isolated architecture: audit → Reader → boundary → Executor → output audit. Takes an `Issue` and a sink, so both seams meet here. |
 
-### Layers 5–6 — the harness
+### Layer 5 — running many, and measuring
 
-`comparison` runs the scenario matrix, `variance` samples the audit and computes
-Wilson/Newcombe intervals, `report` renders both. None of it is needed to adopt
-the architecture; it exists to measure it.
+| Module | Responsibility |
+|---|---|
+| `batch` | Runs a corpus through the pipeline: concurrent, resumable, and three-valued about outcomes so an error can never read as a decision. The production runner, not a measurement tool. |
+| `comparison` | The six-scenario matrix behind the headline demo. |
+| `variance` | Samples the audit and computes Wilson/Newcombe intervals. |
+
+`comparison` and `variance` exist to measure the architecture and adopting it
+needs neither. `batch` is the one thing here you would actually keep.
+
+### Layer 6
+
+`report` renders the comparison as a terminal table and a markdown document.
 
 ## The class diagram
 

@@ -47,6 +47,7 @@ DECLARED_LAYERS: dict[str, int] = {
     "executor": 3,
     "sources": 3,
     "pipeline": 4,
+    "batch": 5,
     "comparison": 5,
     "variance": 5,
     "report": 6,

@@ -113,6 +113,11 @@ class StructuredCall:
     raw_arguments: str
     payload: dict
     attempts: int
+    # Zero when the provider omitted `usage`, which the response schema allows.
+    # Carried here rather than looked up later because a batch run's cost is
+    # the sum over its calls, and there is nowhere else the count still exists.
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 def call_structured_tool(
@@ -241,7 +246,18 @@ def call_structured_tool(
                 )
             continue
 
-        return StructuredCall(raw_arguments=raw, payload=payload, attempts=attempt)
+        # Read through `usage` defensively, for the same reason ping() does:
+        # it is optional in the response schema, and turning a provider quirk
+        # into an AttributeError here would break the pipeline rather than the
+        # cost report.
+        usage = getattr(response, "usage", None)
+        return StructuredCall(
+            raw_arguments=raw,
+            payload=payload,
+            attempts=attempt,
+            input_tokens=usage.prompt_tokens if usage else 0,
+            output_tokens=usage.completion_tokens if usage else 0,
+        )
 
     raise StructuredOutputFailure(
         f"{tool_name}: no valid structured output after {retries + 1} attempt(s); "

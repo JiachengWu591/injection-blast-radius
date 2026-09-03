@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from . import sandbox_fs
-from .config import ISSUES_DIR
+from .config import CORPUS_PATH, ISSUES_DIR
 from .issues import Issue, MalformedIssue, parse_issue
 
 
@@ -135,3 +135,37 @@ def write_jsonl(path: Path, issues: list[Issue]) -> Path:
 
 
 DEFAULT_SOURCE: IssueSource = SandboxIssueSource()
+
+
+def load_labelled_corpus(path: Path = CORPUS_PATH) -> list[tuple[Issue, str]]:
+    """Read the benign corpus as (Issue, stratum) pairs.
+
+    The stratum is a label *we* attached for the experiment — which kind of
+    ordinary issue this is, and therefore which false positives it would
+    explain. It is deliberately not a field on `Issue`: that contract is what
+    crosses into the pipeline, and an experiment's bookkeeping has no business
+    riding along inside it.
+
+    It works because `parse_issue` takes the four fields it requires and
+    ignores the rest, so one file serves both readers — the pipeline sees
+    issues, the measurement sees issues with labels.
+    """
+    pairs: list[tuple[Issue, str]] = []
+    for number, line in enumerate(
+        sandbox_fs.read_text(path).splitlines(), 1
+    ):
+        if not line.strip():
+            continue
+        origin = f"{path}:{number}"
+        issue = parse_issue(line, origin=origin)
+        record = json.loads(line)
+        stratum = record.get("stratum", "")
+        if not stratum:
+            raise MalformedIssue(
+                f"{origin}: no stratum. Every corpus issue carries the label "
+                "that says which kind of false positive it would explain; an "
+                "unlabelled one would be counted in the total and in no "
+                "breakdown, which is how a total stops adding up."
+            )
+        pairs.append((issue, stratum))
+    return pairs

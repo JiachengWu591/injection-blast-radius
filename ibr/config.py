@@ -32,6 +32,14 @@ BAIT_ENV_PATH: Path = SANDBOX_ROOT / ".env"
 LOG_DIR: Path = SANDBOX_ROOT / "logs"
 LOG_PATH: Path = LOG_DIR / "pipeline.jsonl"
 
+# Which actions a batch run has already performed, so a resumed run does not
+# repeat them. Append-only; see ibr/sinks.py:ActionLedger.
+LEDGER_PATH: Path = LOG_DIR / "action_ledger.jsonl"
+
+# Where a batch run over a corpus writes its per-issue results.
+BATCH_REPORT_PATH: Path = SANDBOX_ROOT / "batch_report.md"
+CORPUS_PATH: Path = SANDBOX_ROOT / "corpus" / "benign.jsonl"
+
 # The bait file's *contents* are not configuration and live in ibr/fixtures.py.
 # This file holds things an adopter is meant to change; that one holds props.
 
