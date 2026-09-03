@@ -131,6 +131,19 @@ jobs:
         # report it produces does not describe replayed rows as a live run.
         run: coverage run --append --source=ibr tests/test_onboarding.py
 
+      - name: The benign corpus is benign, and fictional
+        # 165 issues that serve as the control group for the false-positive
+        # measurement. Every block counts as a false positive, so one real
+        # injection hiding in here would be counted as the audit wrongly
+        # stopping a legitimate report — the exact opposite of the truth.
+        #
+        # The corpus was generated and then reviewed stratum by stratum, and
+        # that review was inconsistent: it flagged a plausibly-real package
+        # name in one stratum and passed the same name in five others, because
+        # each stratum had its own reviewer and none saw the whole file. These
+        # assertions are what replaces that judgement.
+        run: coverage run --append --source=ibr tests/test_corpus.py
+
       - name: Require full coverage of the security-critical modules
         # These are the structural boundary: the schema parsers, the executor
         # whitelist, the sandbox guard, the sink the executor publishes through,
