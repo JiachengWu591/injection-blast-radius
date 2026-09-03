@@ -170,6 +170,73 @@ def test_the_contract_modules_depend_on_nothing() -> None:
         )
 
 
+# The package diagram is allowed to leave out imports of exactly this module,
+# and nothing else. `config` has twelve dependents; drawing all twelve turns the
+# picture into a fan around one node and buries the layering it exists to show.
+OMISSIBLE_TARGET = "config"
+
+
+def _drawn_edges() -> set[tuple[str, str]]:
+    """The arrows in ARCHITECTURE.md's package diagram, as (from, to)."""
+    import re
+
+    document = (ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
+    blocks = re.findall(r"```mermaid\n(.*?)```", document, re.S)
+    flowcharts = [b for b in blocks if b.lstrip().startswith("flowchart TD")]
+    assert len(flowcharts) == 1, (
+        f"expected one `flowchart TD` block, found {len(flowcharts)}"
+    )
+    edges: set[tuple[str, str]] = set()
+    for line in flowcharts[0].splitlines():
+        match = re.fullmatch(r"\s+(\w+)\s+-\.?-+>\s+(\w+)\s*", line)
+        if match:
+            edges.add((match.group(1), match.group(2)))
+    return edges
+
+
+def test_the_package_diagram_draws_the_real_graph() -> None:
+    """Nothing invented, and nothing missing except imports of `config`.
+
+    The document used to claim the diagram was "the graph computed from the
+    imports, not a simplification of it". It was a simplification — 40 of 50
+    edges — and the prose said the omitted ones were *dotted*, which implied
+    they were drawn. Nothing checked either half of the sentence.
+
+    Two directions, because they fail differently. An invented edge tells a
+    reader about a dependency that does not exist. A missing one lets a real
+    dependency escape the picture, and the whole argument for the layering is
+    which module depends on which.
+    """
+    real = {
+        (module, dep)
+        for module, deps in _intra_package_imports().items()
+        for dep in deps
+    }
+    drawn = _drawn_edges()
+
+    invented = sorted(drawn - real)
+    assert not invented, (
+        "the package diagram draws edge(s) that are not imports: "
+        f"{invented}. A diagram may simplify; it may not invent."
+    )
+
+    missing = sorted(real - drawn)
+    unexpected = [(a, b) for a, b in missing if b != OMISSIBLE_TARGET]
+    assert not unexpected, (
+        f"real import edge(s) missing from the package diagram: {unexpected}. "
+        f"Only imports of `{OMISSIBLE_TARGET}` may be left out, and "
+        "ARCHITECTURE.md has to keep saying how many."
+    )
+
+    # The stated count has to match, or the prose drifts from the picture.
+    document = (ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
+    claim = f"{len(drawn)} of the {len(real)} real edges"
+    assert claim in document, (
+        f"ARCHITECTURE.md should say {claim!r} — the diagram now draws "
+        f"{len(drawn)} of {len(real)}."
+    )
+
+
 def test_the_architecture_document_lists_every_module() -> None:
     """A module absent from the document is a module nobody will find."""
     for doc_name in ("ARCHITECTURE.md", "ARCHITECTURE.zh-CN.md"):

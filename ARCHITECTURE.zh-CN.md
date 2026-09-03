@@ -10,7 +10,9 @@
 
 七层，无环，19 个模块。箭头是 UML 依赖：每根都**从一个模块指向它 import 的东西**，所以所有箭头都朝下，一根都不许朝上。红色是安全主张所依赖的那一对，蓝色是接生产数据时你要替换的两个接缝。
 
-**下面每一根边都是真的**——这就是 [`tests/test_architecture.py`](tests/test_architecture.py) 从 import 里算出来的那张图，不是它的简化版。指向 `config` 和 `fixtures` 的边画成虚线，只是因为有十一个模块从它们那里读路径和常量，画实线会把其余一切埋掉。
+**下面没有一根边是编出来的**：每个箭头都是 [`tests/test_architecture.py`](tests/test_architecture.py) 真实找到的 import。但它**不是**完整的图——50 条真实边里画了 40 条。**省掉的十条全部指向 `config`**，有十二个模块从它那里读路径和常量；十二条全画出来会把整张图变成一把扇子、把结构埋掉。`llm` 和 `sandbox_fs` 的那两条保留为虚线，好让这个依赖至少在某处可见。
+
+这两件事都由 `test_the_package_diagram_draws_the_real_graph` 断言：**画出来的边一根都不许是编的，真实的边一根都不许缺——除了对 `config` 的 import**。所以那个省略不可能悄悄扩大到真正要紧的那些边上。
 
 ```mermaid
 flowchart TD

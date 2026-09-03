@@ -17,11 +17,18 @@ Seven layers, no cycles, 19 modules. Arrows are UML dependencies: each points
 run up. Red is the pair the security claim rests on; blue is the two seams you
 replace to point this at real data.
 
-Every edge below is real — this is the graph
-[`tests/test_architecture.py`](tests/test_architecture.py) computes from the
-imports, not a simplification of it. The edges into `config` and `fixtures` are
-dotted only because eleven modules read paths and constants from them and solid
-lines would bury everything else.
+Nothing below is invented: every arrow is an import
+[`tests/test_architecture.py`](tests/test_architecture.py) actually finds. It is
+**not** the complete graph, though — 40 of the 50 real edges. The ten left out
+all point at `config`, which twelve modules read paths and constants from;
+drawing all twelve turns the picture into a fan and buries the structure.
+`llm` and `sandbox_fs` keep theirs, dotted, so the dependency is visible
+somewhere.
+
+Both halves of that are asserted by
+`test_the_package_diagram_draws_the_real_graph`: no drawn edge may be invented,
+and no real edge may go missing except an import of `config`. So the omission
+cannot quietly grow into the one that matters.
 
 ```mermaid
 flowchart TD
