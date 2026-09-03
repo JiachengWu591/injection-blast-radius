@@ -36,6 +36,14 @@ LOG_PATH: Path = LOG_DIR / "pipeline.jsonl"
 # repeat them. Append-only; see ibr/sinks.py:ActionLedger.
 LEDGER_PATH: Path = LOG_DIR / "action_ledger.jsonl"
 
+# Audit verdicts sampled over the benign corpus, for the false-positive rate.
+# Kept apart from audit_samples.jsonl because that store holds samples of the
+# twelve attack payloads plus one benign fixture, keyed by subject name — and
+# mixing 165 corpus subjects into it would make "how many samples do we have"
+# a question with two different answers depending on what you meant.
+FP_SAMPLES_PATH: Path = LOG_DIR / "fp_samples.jsonl"
+FP_REPORT_PATH: Path = SANDBOX_ROOT / "false_positive_rate.md"
+
 # Where a batch run over a corpus writes its per-issue results.
 BATCH_REPORT_PATH: Path = SANDBOX_ROOT / "batch_report.md"
 CORPUS_PATH: Path = SANDBOX_ROOT / "corpus" / "benign.jsonl"

@@ -159,6 +159,16 @@ jobs:
         # watch the ordering from inside the call.
         run: coverage run --append --source=ibr tests/test_batch.py
 
+      - name: The false-positive estimand
+        # false_positive_rate.py produces a number that goes in README.md, and
+        # the part that can be wrong without anything looking wrong is the
+        # arithmetic between the verdicts and the headline. An off-by-one in
+        # the majority rule, or counting an unmeasurable issue as a pass, would
+        # silently change the published rate — the second one would let a bad
+        # afternoon on the provider's side improve it. Both breakages were
+        # tried; both fire.
+        run: coverage run --append --source=ibr tests/test_false_positive.py
+
       - name: Require full coverage of the security-critical modules
         # These are the structural boundary: the schema parsers, the executor
         # whitelist, the sandbox guard, the sink the executor publishes through,
