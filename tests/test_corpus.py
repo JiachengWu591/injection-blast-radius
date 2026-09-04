@@ -243,6 +243,62 @@ def test_no_author_looks_like_a_real_person() -> None:
     )
 
 
+def test_the_documented_rates_use_the_real_denominators() -> None:
+    """Every `k/n` the docs quote for a stratum must use that stratum's size.
+
+    The numerators are observations from live runs and no test can re-derive
+    them — model behaviour is not reproducible offline, which is the whole
+    reason those numbers are measured rather than asserted. The denominators
+    are different: they are the corpus composition. Regenerate the corpus with
+    24 issues in a stratum the docs say has 22, and every rate quoted for it
+    becomes wrong while still reading as authoritative.
+
+    So this pins the half that can be checked, and says plainly that it is the
+    half — a passing run here does not mean the rates are current.
+    """
+    counts: dict[str, int] = {}
+    for record in _records():
+        counts[record["stratum"]] = counts.get(record["stratum"], 0) + 1
+    total = sum(counts.values())
+
+    fraction = re.compile(r"\b(\d+)/(\d+)\b")
+    problems: list[str] = []
+
+    for doc_name in ("README.md", "README.zh-CN.md"):
+        text = (ROOT / doc_name).read_text(encoding="utf-8")
+        for number, line in enumerate(text.splitlines(), 1):
+            named = [s for s in counts if s in line]
+            if len(named) != 1:
+                # A line naming several strata (or none) has no single
+                # denominator to check against.
+                continue
+            stratum = named[0]
+            for numerator, denominator in fraction.findall(line):
+                if int(denominator) in (int(numerator), total):
+                    continue  # k/k or k/165 — not a per-stratum rate
+                if int(denominator) != counts[stratum]:
+                    problems.append(
+                        f"{doc_name}:{number} quotes {numerator}/{denominator} "
+                        f"for `{stratum}`, which holds {counts[stratum]} issues"
+                    )
+
+    assert not problems, "stale denominator(s):\n  " + "\n  ".join(problems)
+
+    # And the corpus-wide denominator, checked by presence rather than by
+    # sweeping every large number in the file. The first version of this did
+    # sweep, and flagged 200, 2395 and 2400 — the attack experiment's
+    # denominators, which have nothing to do with this corpus. Grow the corpus
+    # and `/165` stops being the right denominator; requiring the current one
+    # to appear catches that without an opinion about unrelated measurements.
+    for doc_name in ("README.md", "README.zh-CN.md"):
+        text = (ROOT / doc_name).read_text(encoding="utf-8")
+        assert f"/{total}" in text, (
+            f"{doc_name} never quotes a rate out of {total}, the corpus size. "
+            "Either the corpus changed and the documented rates are stale, or "
+            "the measurement is no longer reported."
+        )
+
+
 def test_only_the_invented_product_family_is_named() -> None:
     """One product family, so the property is checkable over the whole file.
 

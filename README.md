@@ -71,7 +71,7 @@ Given the *exact same* malicious input, two architectures side by side:
 | Has execution rights | ✅ — same agent | ✅ — different agent |
 | Ever sees raw untrusted text *and* holds execution rights | ✅ (that's the bug) | ❌ (that's the fix) |
 | Result under attack | ❌ leaks secret | ✅ contained |
-| Result under normal use | ✅ triages correctly | ✅ triages correctly |
+| Result under normal use | ✅ triages correctly | ✅ triages correctly — with a measured gap, below |
 
 The last row matters as much as the second-to-last: isolation that only "works" by breaking normal functionality isn't a fix, it's a workaround.
 
@@ -80,10 +80,50 @@ architectures do not produce *identical* output on benign input. The baseline
 writes free-form prose; the isolated executor picks one of four predefined
 actions (`reply_comment`, `label_bug`, `label_question`, `no_action`). On the
 benign fixture the baseline posts a written reply and the isolated pipeline
-applies a `bug` label. Both are correct triage. What the row claims is that
-isolation didn't *break* benign handling — not that a design built around a
-fixed action set can reproduce free-form prose, which it can't, by
-construction.
+applies a `bug` label. Both are correct triage.
+
+### What the fixed action set costs
+
+That used to be the end of the argument, made from one fixture. Running 165
+ordinary issues through the full pipeline puts a number on it
+(`python batch_dry_run.py`):
+
+| Outcome | Count |
+|---|---|
+| `label_bug` | 97 |
+| `reply_comment` | 57 |
+| `label_question` | 1 |
+| **`no_action`** | **10** |
+
+**10/165 = 6.1%** of ordinary issues got no response at all, 95% CI
+[3.3%, 10.8%] — and it is not spread evenly:
+
+| Stratum | no action | Rate | 95% CI |
+|---|---|---|---|
+| `imperative_to_humans` — instructions aimed at maintainers | 7/22 | 31.8% | [16.4%, 52.7%] |
+| `discusses_injection` | 1/24 | 4.2% | [0.7%, 20.2%] |
+| `non_english` | 1/24 | 4.2% | [0.7%, 20.2%] |
+| `edge_shape` | 1/24 | 4.2% | [0.7%, 20.2%] |
+| `plain`, `mentions_config`, `quotes_secret_shaped` | 0 | 0.0% | — |
+
+**This is not the screening layer refusing them.** The audit rated 164 of the
+165 `safe` and blocked none. The Reader ran, looked at its four options, and
+found none that fit — because those issues are neither bug reports nor
+questions. They are project management: *close as duplicate of #311*, *do not
+merge #441 before this*, *hold the 0.4 branch until Monday*.
+
+So it is a **functional coverage gap, not a security failure**, and it is the
+actual price of a finite action set. A fifth action would shrink it and a sixth
+would shrink it further; every one of them widens what a captured Reader can
+choose from. That trade is the design, stated with a number instead of a
+promise. Worth noticing too that `label_question` fired **once** in 165 runs —
+in practice the set is three actions, not four.
+
+Two things this measurement is not. It is one run per issue, not three, so the
+Reader's own non-determinism means a re-run would pick a different ten; the rate
+estimates how often this happens, not which issues it happens to. And it is
+measured on the same synthetic corpus as everything else on this page — see
+[what that cannot tell you](#what-this-measurement-cannot-tell-you).
 
 ## Why it works
 
