@@ -459,13 +459,46 @@ Neither was blocked. Run-to-run disagreement was 2/165 overall, which is the
 audit's own variance and the reason the per-issue decision takes a majority
 rather than trusting one call.
 
+### Does it hold on real issues?
+
+That corpus is synthetic, so the obvious objection is that a model wrote it and
+a model audits it — correlated blind spots would produce exactly this clean a
+result. So the same measurement was run on **165 real issues from
+`pandas-dev/pandas`**, fetched read-only and de-identified
+(`mise run corpus:real`, then `mise run fp-rate:real`).
+
+| Corpus | Blocked | 95% CI | Flagged `suspicious` | Disagreed with itself |
+|---|---|---|---|---|
+| Synthetic, stratified | 0/165 | [0.0%, 2.3%] | 2/165 | 2/165 |
+| **Real, `pandas-dev/pandas`** | **0/165** | **[0.0%, 2.3%]** | **0/165** | **0/165** |
+| Difference (real − synthetic) | — | [−2.3%, +2.3%] | [−4.3%, +1.2%] | — |
+
+Both difference intervals span zero, so **no difference was detected**. Note
+what that is and is not: with 165 issues per group this experiment would need
+about **647 per group** to separate 0.0% from 1.2%. "No difference detected" here
+means the experiment was not powerful enough to find one, not that the synthetic
+corpus is established as representative.
+
+The result that did surprise me is the direction. **The synthetic corpus was
+harder than the real one** — it produced two `suspicious` verdicts and two
+run-to-run disagreements where real pandas issues produced none of either. That
+is because its strata were built to sit on the false-positive boundary: real bug
+reports do not usually paste a credential-shaped string or discuss prompt
+injection as subject matter. So the two corpora do different jobs. The synthetic
+one is a stress test; the real one is a check that the stress test was not
+measuring an artefact.
+
 ### What this measurement cannot tell you
 
-**The corpus is synthetic, and a model wrote it while a model audits it.** 0/165
-— including the deliberately borderline strata — is a suspiciously clean
-result, and correlated blind spots between the generator and the auditor are the
-leading candidate for at least part of it. A real backlog need not be this
-cooperative.
+**"Real" here means real *pandas*.** Its issues are technical, mostly English,
+and written by an experienced contributor base. A support tracker for a consumer
+product would look nothing like it, and nothing here says what the audit would
+do with that. One repository is one sample of what "an ordinary issue" means.
+
+**And the synthetic corpus is still synthetic.** The real-data run rules out the
+strongest version of the correlated-blind-spot worry — that generated issues are
+systematically easy for the auditor — and it rules it out only at the resolution
+this n supports.
 
 So the claim is narrow on purpose: this is what the audit does to issues of this
 *shape*. It does not establish what it would do to a real one. Nine assertions
@@ -565,6 +598,8 @@ mise run demo:live            # the same comparison, decided by a real model
 | `mise run matrix` | Twelve injection techniques, both architectures | yes |
 | `mise run fp-rate` | The audit's false-positive rate over 165 issues (~$0.05) | yes |
 | `mise run dry-run` | The corpus through the pipeline, publishing nothing (~$0.15) | yes |
+| `mise run corpus:real` | Fetch + de-identify 165 real pandas issues (~$0.06) | yes |
+| `mise run fp-rate:real` | The same false-positive measurement, on real issues | yes |
 
 Opening the repo in a **GitHub Codespace** or VS Code dev container runs all of
 that setup on creation ([`.devcontainer/`](./.devcontainer/)); the terminal is

@@ -169,6 +169,23 @@ jobs:
         # tried; both fire.
         run: coverage run --append --source=ibr tests/test_false_positive.py
 
+      - name: The de-identifier, in both directions
+        # PROJECT_SPEC.md §6.1 authorises reading real issue text on the
+        # condition that it is de-identified and that the limits are stated.
+        # This checks both halves.
+        #
+        # Over-scrubbing is not the safe direction. The reason to use real
+        # issues is that their prose is real, and the first version of this
+        # module turned every `@property` in a pandas issue into a pseudonym
+        # and would have mangled every traceback. Both directions are asserted:
+        # emails, mentions, home paths and URL paths go; decorators, version
+        # strings and site-packages tracebacks stay byte-identical.
+        #
+        # The load-bearing assertion is that residual_risks() stays non-empty.
+        # The moment that module reads as complete, §6.1's authorisation is
+        # being relied on for more than it grants.
+        run: python tests/test_deidentify.py
+
       - name: Require full coverage of the security-critical modules
         # These are the structural boundary: the schema parsers, the executor
         # whitelist, the sandbox guard, the sink the executor publishes through,

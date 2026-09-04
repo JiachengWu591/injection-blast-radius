@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -314,6 +315,129 @@ def test_only_the_invented_product_family_is_named() -> None:
         f"Every invented product is a {PRODUCT_ROOT}* name."
     )
     assert PRODUCT_ROOT in text, "the corpus names no product at all"
+
+
+# --- the real corpus -------------------------------------------------------
+#
+# `sandbox/corpus/real.jsonl` holds de-identified text from real pandas issues,
+# authorised by PROJECT_SPEC.md §6.1. It is gitignored, so it is absent on a
+# fresh clone and in CI — these assertions skip when it is missing and are
+# strict when it is present.
+#
+# They check the *output*, not the de-identifier. tests/test_deidentify.py
+# tests the function; this catches the record that never went through it.
+
+REAL_CORPUS = ROOT / "sandbox" / "corpus" / "real.jsonl"
+
+REAL_AUTHOR = re.compile(r"^reporter-[0-9a-f]{6}$")
+ANY_EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+NAMED_HOME = re.compile(r"(?i)(?:/home/|/Users/|\\Users\\)(?!\[user\])[^/\\\s]+")
+
+
+def _real_records() -> list[dict] | None:
+    if not REAL_CORPUS.is_file():
+        return None
+    return [
+        json.loads(line)
+        for line in REAL_CORPUS.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def test_the_real_corpus_is_gitignored() -> None:
+    """The copyright and privacy decision, made checkable.
+
+    §6.1 turns on the real text never entering git: issue prose is copyright
+    its author and the repository's licence does not cover it, and git history
+    is permanent while de-identification is not complete. Delete the ignore
+    rule and both of those reverse silently on the next `git add -A`.
+    """
+    inside_repo = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=ROOT,
+        capture_output=True,
+    )
+    if inside_repo.returncode != 0:
+        print("      (skipped: not a git repository)")
+        return
+
+    result = subprocess.run(
+        ["git", "check-ignore", "-q", "sandbox/corpus/real.jsonl"],
+        cwd=ROOT,
+        capture_output=True,
+    )
+    assert result.returncode == 0, (
+        "sandbox/corpus/real.jsonl is NOT gitignored. Real issue prose is "
+        "copyright its authors and de-identification is incomplete; the "
+        "repository publishes tools/fetch_real_corpus.py, never its output. "
+        "See PROJECT_SPEC.md §6.1."
+    )
+
+
+def test_no_mechanical_identifier_survived_in_the_real_corpus() -> None:
+    """The post-hoc check, independent of the de-identifier's own logic.
+
+    A bug in `scrub` is one failure mode and `test_deidentify.py` covers it. A
+    record that never reached `scrub` at all is a different one, and only
+    reading the finished file catches that.
+    """
+    records = _real_records()
+    if records is None:
+        print("      (skipped: no real corpus — run tools/fetch_real_corpus.py)")
+        return
+    assert records, "the real corpus file exists but is empty"
+
+    offenders: list[str] = []
+    for record in records:
+        text = f"{record['title']}\n{record['body']}"
+        if ANY_EMAIL.search(text):
+            offenders.append(f"{record['issue_id']}: an email address survived")
+        if NAMED_HOME.search(text):
+            found = NAMED_HOME.search(text)
+            offenders.append(
+                f"{record['issue_id']}: a named home directory survived "
+                f"({found.group(0) if found else '?'})"
+            )
+        if not REAL_AUTHOR.match(record["author"]):
+            offenders.append(
+                f"{record['issue_id']}: author {record['author']!r} is not a "
+                "pseudonym"
+            )
+        if BAIT_SECRET_VALUE in text:
+            offenders.append(f"{record['issue_id']}: contains BAIT_SECRET_VALUE")
+
+    assert not offenders, (
+        f"{len(offenders)} identifier(s) survived de-identification:\n  "
+        + "\n  ".join(offenders[:20])
+    )
+
+
+def test_every_real_record_carries_its_audit_trail() -> None:
+    """`removed` says what was taken out of a real person's text.
+
+    Without it there is no way, later, to answer "what did we strip from this?"
+    — and that question is the whole basis for claiming §6.1 was honoured.
+    """
+    records = _real_records()
+    if records is None:
+        print("      (skipped: no real corpus)")
+        return
+
+    for record in records:
+        assert record.get("stratum") == "real", (
+            f"{record['issue_id']}: stratum is {record.get('stratum')!r}, so it "
+            "would be pooled with the synthetic strata"
+        )
+        removed = record.get("removed")
+        assert isinstance(removed, list) and "author" in removed, (
+            f"{record['issue_id']}: removed={removed!r} — the author field is "
+            "always stripped, so it must always be recorded"
+        )
+        assert len(record.get("why_benign", "").strip()) > 10, (
+            f"{record['issue_id']}: no reviewer note, so the benign label "
+            "cannot be argued with"
+        )
+        parse_issue(json.dumps(record), origin=f"real.jsonl:{record['issue_id']}")
 
 
 def main() -> int:

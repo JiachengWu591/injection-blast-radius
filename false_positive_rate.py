@@ -46,10 +46,11 @@ import sys
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from ibr import sandbox_fs
 from ibr.bootstrap import ensure_sandbox
-from ibr.config import AUDIT_MODEL, FP_REPORT_PATH, FP_SAMPLES_PATH
+from ibr.config import AUDIT_MODEL, CORPUS_PATH, FP_REPORT_PATH, FP_SAMPLES_PATH
 from ibr.issues import Issue
 from ibr.sources import load_labelled_corpus
 from ibr.variance import SampleStore, measure_subject, wilson_interval
@@ -341,20 +342,42 @@ def main() -> int:
         help="ignore stored samples and pay for every call again",
     )
     parser.add_argument("--model", default=AUDIT_MODEL)
+    parser.add_argument(
+        "--corpus",
+        default=None,
+        help=(
+            "corpus to measure, relative to sandbox/ "
+            "(default: the synthetic corpus/benign.jsonl; "
+            "pass corpus/real.jsonl for the real one)"
+        ),
+    )
     args = parser.parse_args()
 
     ensure_sandbox()
-    corpus = load_labelled_corpus()
+    corpus_path = Path(args.corpus) if args.corpus else CORPUS_PATH
+    corpus = load_labelled_corpus(corpus_path)
     labels = {
         issue.issue_id: why
         for (issue, _), why in zip(
-            corpus, _reasons(), strict=True
+            corpus, _reasons(corpus_path), strict=True
         )
     }
     if args.limit:
         corpus = corpus[: args.limit]
 
-    store = None if args.fresh else SampleStore(FP_SAMPLES_PATH)
+    # A separate store and report per corpus. Sharing them would merge the
+    # synthetic and real measurements into one set of numbers, and the whole
+    # point of running both is that they are different claims.
+    tag = "" if corpus_path == CORPUS_PATH else f".{corpus_path.stem}"
+    store_path = FP_SAMPLES_PATH.with_suffix(f"{tag}.jsonl") if tag else FP_SAMPLES_PATH
+    report_path = (
+        FP_REPORT_PATH.with_name(f"false_positive_rate{tag}.md")
+        if tag
+        else FP_REPORT_PATH
+    )
+    print(f"corpus: sandbox/{corpus_path.as_posix()}  ({len(corpus)} issues)\n")
+
+    store = None if args.fresh else SampleStore(store_path)
     if store is not None and store.partial_lines_skipped:
         print(
             f"note: skipped {store.partial_lines_skipped} partial line(s) in "
@@ -376,8 +399,8 @@ def main() -> int:
 
     report = render(result, audit_model=args.model)
     print("\n" + report)
-    sandbox_fs.write_text(FP_REPORT_PATH, report + "\n")
-    print(f"\nReport: {FP_REPORT_PATH}")
+    sandbox_fs.write_text(report_path, report + "\n")
+    print(f"\nReport: {report_path}")
 
     # A run where most issues could not be measured is not a result.
     if len(result.measured) < len(corpus) * 0.9:
@@ -390,7 +413,7 @@ def main() -> int:
     return 0
 
 
-def _reasons() -> list[str]:
+def _reasons(path: Path) -> list[str]:
     """`why_benign` per corpus issue, in file order.
 
     Read separately from `load_labelled_corpus` because that returns the
@@ -400,10 +423,8 @@ def _reasons() -> list[str]:
     """
     import json
 
-    from ibr.config import CORPUS_PATH
-
     reasons: list[str] = []
-    for line in sandbox_fs.read_text(CORPUS_PATH).splitlines():
+    for line in sandbox_fs.read_text(path).splitlines():
         if line.strip():
             reasons.append(json.loads(line).get("why_benign", ""))
     return reasons

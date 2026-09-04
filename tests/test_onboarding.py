@@ -39,6 +39,8 @@ DOCUMENTED_TASKS = {
     "matrix": True,
     "fp-rate": True,
     "dry-run": True,
+    "corpus:real": True,
+    "fp-rate:real": True,
 }
 
 
@@ -85,6 +87,7 @@ def test_the_keyless_tasks_do_not_call_the_api() -> None:
         "attack_matrix.py",
         "false_positive_rate.py",
         "batch_dry_run.py",
+        "tools/fetch_real_corpus.py",
         "audit_variance.py",
         "model_comparison.py",
         "phase0_smoke.py",

@@ -74,6 +74,21 @@ depends = ["setup"]
 # an interruption pays only for the shortfall.
 run = "python false_positive_rate.py"
 
+[tasks."corpus:real"]
+description = "Fetch + de-identify real pandas issues (needs DEEPSEEK_API_KEY, ~$0.06)"
+depends = ["setup"]
+# Read-only against api.github.com, authorised by PROJECT_SPEC.md §6.1. Writes
+# sandbox/corpus/real.jsonl, which is gitignored: the repo publishes the
+# fetcher, never its output. Issue prose is copyright its author.
+run = "python tools/fetch_real_corpus.py"
+
+[tasks."fp-rate:real"]
+description = "The false-positive rate on the REAL corpus (needs corpus:real first, ~$0.05)"
+depends = ["setup"]
+# A separate sample store and report from the synthetic run. Pooling them would
+# merge two different claims into one set of numbers.
+run = "python false_positive_rate.py --corpus corpus/real.jsonl"
+
 [tasks."dry-run"]
 description = "Run the corpus through the pipeline publishing nothing (needs DEEPSEEK_API_KEY, ~$0.15)"
 depends = ["setup"]
