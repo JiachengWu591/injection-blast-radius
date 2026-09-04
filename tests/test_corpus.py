@@ -35,7 +35,7 @@ from ibr.fixtures import BAIT_SECRET_VALUE  # noqa: E402
 from ibr.issues import Issue, parse_issue  # noqa: E402
 from ibr.output_audit import audit_output  # noqa: E402
 from ibr.sources import JsonLinesIssueSource  # noqa: E402
-from tools.deidentify import credential_shaped  # noqa: E402
+from tools.deidentify import NOT_A_HANDLE, credential_shaped  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CORPUS = ROOT / "sandbox" / "corpus" / "benign.jsonl"
@@ -64,23 +64,19 @@ PRODUCT_ROOT = "blastdemo"
 # cannot tell you about the next one.
 KNOWN_REAL_ROOTS = ("corvid", "orchard", "sparrow", "yamlish", "quillmark")
 
-# Credential-shaped: one definition, imported from the de-identifier rather
-# than restated here. Two copies of "this looks like a key" would drift, and
-# the copy that drifted would be the one deciding whether a real credential
-# reached disk.
+# Credential-shaped: one definition, imported rather than restated.
+# `tools/deidentify.py` owns it because that is the module which has to act on
+# it, and two copies of "this looks like a key" would drift — the copy that
+# drifted being the one deciding whether a real credential reached disk.
 #
-# Deliberately not a generic high-entropy sweep. The synthetic corpus contains
-# a base64 cache-file header on purpose, because an entropy scanner will want
-# to flag it and a maintainer would not — and a first version of this check
-# also flagged `key=[redacted]'` (an issue *about* redaction) and
-# `config_keys_overridden=retries,log_level` (a list of key names). Both are
-# the opposite of a leak.
-# Imported, not restated. `tools/deidentify.py` owns the definition because it
-# is the module that has to act on it.
+# Two policies over the one definition. The synthetic corpus may carry
+# credential shapes when the line says `fake`, because the
+# `quotes_secret_shaped` stratum exists to paste them on purpose. The real
+# corpus is allowed none at all.
 #
-# The synthetic corpus is allowed credential shapes as long as the line carries
-# a fake marker — the `quotes_secret_shaped` stratum exists to paste them on
-# purpose. The real corpus is allowed none at all.
+# Deliberately not a generic high-entropy sweep: the synthetic corpus contains
+# a base64 cache-file header on purpose, and an entropy scanner would flag it
+# where a maintainer would not.
 
 
 def _credential_shaped(text: str) -> list[str]:
@@ -293,10 +289,10 @@ def test_only_the_invented_product_family_is_named() -> None:
 
 # --- the real corpus -------------------------------------------------------
 #
-# `sandbox/corpus/real.jsonl` holds de-identified text from real pandas issues,
-# authorised by PROJECT_SPEC.md §6.1. It is gitignored, so it is absent on a
-# fresh clone and in CI — these assertions skip when it is missing and are
-# strict when it is present.
+# `sandbox/corpus/real.jsonl` holds de-identified text from real issues across
+# four repositories, authorised by PROJECT_SPEC.md §6.1. It is gitignored, so it
+# is absent on a fresh clone and in CI — these assertions skip when it is
+# missing and are strict when it is present.
 #
 # They check the *output*, not the de-identifier. tests/test_deidentify.py
 # tests the function; this catches the record that never went through it.
@@ -406,16 +402,19 @@ def test_no_unscrubbed_handle_survived_into_the_real_corpus() -> None:
         print("      (skipped: no real corpus)")
         return
 
-    code_span = re.compile(r"```.*?```|`[^`\n]*`", re.S)
     handle_shaped = re.compile(r"(?<![\w.])@([A-Za-z0-9][A-Za-z0-9_-]{2,38})")
 
     offenders: list[str] = []
     for record in records:
-        # Code spans are exempt by design: that is where decorators live, and
-        # the scrubber does not read inside them either.
-        text = code_span.sub("", f"{record['title']}\n{record['body']}")
+        # Code spans are NOT exempt. They were, in both this gate and the
+        # scrubber, on the reasoning that decorators live there — and a
+        # langchain issue template put a real social handle inside a fence, so
+        # the handle survived and this gate looked straight past it. The
+        # denylist is the only exemption now, in both places.
+        text = f"{record['title']}\n{record['body']}"
         for match in handle_shaped.finditer(text):
-            if match.group(1).startswith("reporter-"):
+            handle = match.group(1)
+            if handle.startswith("reporter-") or handle in NOT_A_HANDLE:
                 continue
             offenders.append(f"{record['issue_id']}: {match.group(0)}")
 

@@ -477,23 +477,35 @@ generalising from at all.
 | Synthetic, stratified | 165 | 0 | [0.0%, 2.3%] | 2 |
 | `pandas` — library, technical, experienced contributors | 90 | 0 | [0.0%, 4.1%] | 0 |
 | `ollama` — end-user heavy: log dumps, Windows paths | 90 | 0 | [0.0%, 4.1%] | 2 |
-| `ant-design` — non-English dominant, 67/90 with CJK text | 90 | 0 | [0.0%, 4.1%] | 1 |
-| `langchain` — LLM-adjacent: prompts, API keys, injection talk | 90 | 0 | [0.0%, 4.1%] | 1 |
-| **All real** | **360** | **0** | **[0.0%, 1.1%]** | **4** |
+| `ant-design` — non-English dominant, 66/90 with CJK text | 90 | 0 | [0.0%, 4.1%] | 1 |
+| `langchain` — LLM-adjacent: prompts, API keys, injection talk | 90 | 0 | [0.0%, 4.1%] | 4 |
+| **All real** | **360** | **0** | **[0.0%, 1.1%]** | **7** |
 
 **0/360, 95% CI [0.0%, 1.1%]** — and zero in every repository separately, across
-issues that share almost nothing in shape. Median body length runs from 732
-characters (`ant-design`) to 3,777 (`langchain`); one repository is two-thirds
-Chinese; 232 distinct authors. Four calls in 1,080 came back `suspicious` and
-none came back `high_risk`.
+issues that share almost nothing in shape. Median body length runs from 734
+characters (`ant-design`) to 3,636 (`langchain`); one repository is two-thirds
+Chinese; 230 distinct authors.
 
-The result that surprised me is the direction. **The synthetic corpus was harder
-than any of the real ones** — it produced more `suspicious` verdicts at 165
-issues than 360 real issues did. Its strata were built to sit on the
-false-positive boundary, and real bug reports do not usually paste a
-credential-shaped string or discuss prompt injection as subject matter. So the
-two corpora do different jobs: the synthetic one is a stress test, the real ones
-check the stress test was not measuring an artefact.
+Seven calls in 1,080 came back `suspicious`. **One came back `high_risk`** — a
+routine `langchain` bug report, on one of its three calls, the other two of
+which called it safe. That single vote is the whole reason the per-issue decision
+is a majority: under a single-call rule that issue is blocked and the real-data
+rate is 1/360 rather than 0/360. The pessimistic reading is in the report as
+"blocked on at least one of 3 calls", 1/360, [0.0%, 1.6%].
+
+An earlier version of this section called the synthetic corpus the harder one,
+on a `suspicious` rate of 2/165 = 1.2% against a then-measured 4/360 = 1.1%. A
+tenth of a point will not carry that claim, and the re-fetched corpus puts the
+real rate at 7/360 = 1.9% [0.9%, 4.0%] against 1.2% [0.3%, 4.3%] — a difference
+of [−2.5%, +2.9%]. The sign flipped while neither interval moved much, which is
+what a difference of nothing looks like.
+
+What survives is the weaker claim, and it is the one this section needs: the
+synthetic corpus is not systematically *easier* for the auditor, so its clean
+result is not an artefact of a model grading work another model wrote. The two
+corpora still do different jobs — the synthetic one is a stress test built on
+the false-positive boundary, the real ones check that the stress test was
+measuring something.
 
 ### The filter that makes this corpus less representative than it looks
 
@@ -502,21 +514,62 @@ drop rate is **not** uniform:
 
 | Repository | Reviewed | Dropped | Rate | 95% CI | vs `pandas` |
 |---|---|---|---|---|---|
-| `ant-design` | 94 | 4 | 4.3% | [1.7%, 10.4%] | [−9.2%, +5.0%] |
-| `pandas` | 96 | 6 | 6.2% | [2.9%, 13.0%] | reference |
-| `ollama` | 102 | 12 | 11.8% | [6.9%, 19.4%] | [−2.8%, +13.9%] |
-| **`langchain`** | 121 | **31** | **25.6%** | [18.7%, 34.1%] | **[+9.7%, +28.5%]** |
+| `ant-design` | 91 | 1 | 1.1% | [0.2%, 6.0%] | [−4.9%, +4.9%] |
+| `pandas` | 91 | 1 | 1.1% | [0.2%, 6.0%] | reference |
+| `ollama` | 93 | 3 | 3.2% | [1.1%, 9.1%] | [−3.2%, +8.0%] |
+| **`langchain`** | 107 | **17** | **15.9%** | [10.2%, 24.0%] | **[+7.3%, +22.9%]** |
 
-`langchain`'s difference from `pandas` **excludes zero**, so it is a real effect
-rather than noise. Its issues discuss organisations, keys and prompts, which is
-exactly what the reviewer drops.
+`langchain`'s difference from `pandas` still **excludes zero**. Grouping the
+drops by cause says what that difference is made of, and most of it is not
+de-identification:
 
-That matters, and it cuts against the expansion. Dropping the issues that name
-things systematically removes the ones that made a repository *different* — so
-the surviving `langchain` sample is biased toward whichever of its issues most
-resemble an ordinary bug report. The expansion partly defeats itself, and the
-right response is to publish the drop rates rather than loosen the review, which
-[§6.1](./PROJECT_SPEC.md) does not permit.
+| Cause | `ant-design` | `pandas` | `ollama` | `langchain` |
+|---|---|---|---|---|
+| identifies a person | · | · | 1 | 8 |
+| ties reporter to an organisation | · | · | · | 4 |
+| promotional, not an issue | · | · | · | 13 |
+| not an ordinary issue | 1 | 1 | 2 | 11 |
+| **issues dropped** | **1** | **1** | **3** | **17** |
+
+Counts are per cause, so a column sums past its drop count: an advertisement that
+also names its author is one drop under two headings. Thirteen of `langchain`'s
+17 drops are vendor spam — submissions asking for a third-party package to be
+listed in the docs. That is a property of that issue tracker, not of the
+de-identifier.
+
+The split also shows up in what survived. **156 of the 360 kept issues name a
+third party**, and each carries a `names_third_party` flag recording it — so
+"we dropped everything that mentioned an organisation" and "we kept those" are
+distinguishable after the fact rather than a claim you have to take on trust.
+Under the merged flag those 156 were the ones at risk.
+
+Separating the two kinds of cause bounds the part that is actually a privacy
+filter:
+
+- **at least 5 of 382** reviewed issues, 1.3% [0.6%, 3.0%], were dropped for a
+  privacy reason and nothing else;
+- **at most 11 of 382**, 2.9% [1.6%, 5.1%], carried any privacy reason at all,
+  counting those that were also spam.
+
+On the lower bound the `langchain`–`pandas` difference is [−0.9%, +9.2%] and
+**includes zero**; on the upper bound it is [+3.5%, +16.4%] and does not. Which
+of those you believe depends on how a drop with several causes is attributed, and
+these 382 issues cannot settle that. So the bias narrowed. It did not go away,
+and the surviving `langchain` sample is still tilted toward whichever of its
+issues most resemble an ordinary bug report.
+
+**Where the earlier number went.** A previous run of this fetch dropped 25.6% of
+`langchain` against 6.2% of `pandas`. Reading those drops is what produced the
+breakdown above: a single `identifies_someone` flag was carrying three unrelated
+jobs, and it was discarding genuine bug reports for naming an API they called —
+one drop note said "a straightforward security bug report that a maintainer would
+triage normally". The review now asks four separate questions, and
+[`tests/test_fetch_real.py`](tests/test_fetch_real.py) asserts they stay
+separate, because merging them again would quietly remove whatever makes each
+repository different.
+
+The right response to what remains is to publish the drop rates rather than
+loosen the review, which [§6.1](./PROJECT_SPEC.md) does not permit.
 
 ### What this measurement still cannot tell you
 
@@ -530,12 +583,15 @@ strongest version of the correlated-blind-spot worry — that generated issues a
 systematically easy for the auditor — at the resolution 360 issues supports, and
 no further.
 
-**A null result is still a null result.** Zero blocks in 1,080 calls bounds the
-rate at 1.1%; it does not establish that the rate is zero.
+**A null result is still a null result.** Zero *blocked issues* in 360 bounds
+the rate at 1.1%. One of the 1,080 calls did return `high_risk`, so this is not
+a rate of zero being measured — it is a rate small enough that 360 issues cannot
+resolve it.
 
 So the claim is narrow on purpose: this is what the audit does to issues of this
-*shape*. It does not establish what it would do to a real one. Nine assertions
-in [`tests/test_corpus.py`](tests/test_corpus.py) pin what the corpus is —
+*shape*. It does not establish what it would do to a real one. The 15
+assertions in [`tests/test_corpus.py`](tests/test_corpus.py) pin what both
+corpora are —
 every credential-shaped string fake-marked, the bait secret absent, every author
 a handle, one invented product family — but no assertion can make a synthetic
 issue representative.
@@ -631,7 +687,7 @@ mise run demo:live            # the same comparison, decided by a real model
 | `mise run matrix` | Twelve injection techniques, both architectures | yes |
 | `mise run fp-rate` | The audit's false-positive rate over 165 issues (~$0.05) | yes |
 | `mise run dry-run` | The corpus through the pipeline, publishing nothing (~$0.15) | yes |
-| `mise run corpus:real` | Fetch + de-identify 165 real pandas issues (~$0.06) | yes |
+| `mise run corpus:real` | Fetch + de-identify 360 real issues, 90 per repo (~$0.20) | yes |
 | `mise run fp-rate:real` | The same false-positive measurement, on real issues | yes |
 
 Opening the repo in a **GitHub Codespace** or VS Code dev container runs all of

@@ -73,6 +73,12 @@ NOT_A_HANDLE = frozenset(
         "Component", "Injectable", "NgModule", "Input", "Output", "Bean",
         "app", "task", "route", "get", "post", "put", "delete", "command",
         "staticfiles", "everyone", "here", "all", "channel",
+        # pydantic, langchain and langgraph, because those are the
+        # repositories being fetched and `@tool` showed up as a "handle" in a
+        # langchain code sample the first time the exemption came off.
+        "tool", "chain", "traceable", "entrypoint", "agent", "retry",
+        "validator", "field_validator", "model_validator", "root_validator",
+        "computed_field", "model_serializer", "field_serializer",
     }
 )
 
@@ -268,11 +274,19 @@ def scrub(text: str) -> tuple[str, list[str]]:
     text = apply(
         "quote_header", lambda s: QUOTE_HEADER.sub("[quoted reply]", s), text
     )
-    text = apply(
-        "mention",
-        lambda s: _outside_code(s, lambda part: MENTION.sub(replace_mention, part)),
-        text,
-    )
+    # Everywhere, including code spans. The exemption used to be here to
+    # protect decorators, and it leaked: `@gouveags` inside a fenced block
+    # survived, because a GitHub issue template renders its social-handles
+    # field as code. One langchain issue had the handle scrubbed and another
+    # did not, from the same reporter, purely because of where the template
+    # put it.
+    #
+    # So the denylist is now the only protection, and the cost is real: an
+    # unlisted decorator inside a code block becomes a pseudonym. That damages
+    # a code block and leaks nothing, while the other way round leaks a real
+    # person's handle — and §6 rule 3 is what settles which of those is
+    # acceptable.
+    text = apply("mention", lambda s: MENTION.sub(replace_mention, s), text)
     text = apply(
         "home_path",
         lambda s: HOME_PATH.sub(lambda m: m.group(1) + "[user]", s),

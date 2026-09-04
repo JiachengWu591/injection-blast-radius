@@ -217,6 +217,58 @@ def test_documentation_line_citations_still_point_at_the_right_code() -> None:
         )
 
 
+# "N assertions in tests/X.py" — a doc claim about a file's own contents, and
+# the one kind of citation the line-number gate above cannot see. The English
+# README said "Nine assertions in tests/test_corpus.py" for as long as that file
+# had fifteen; nothing failed, because a count is not a link.
+#
+# Word order differs between the two languages, so the pattern does too. Both
+# are required to match: rewording the sentence so the regex misses it fails
+# here rather than quietly retiring the check.
+COUNT_CLAIMS: tuple[tuple[str, str, str], ...] = (
+    (
+        "README.md",
+        r"(\d+)\s+assertions\s+in\s+\[`(tests/[\w.]+\.py)`\]",
+        "tests/test_corpus.py",
+    ),
+    (
+        "README.zh-CN.md",
+        r"\[`(tests/[\w.]+\.py)`\]\([^)]*\)\s*里[^0-9*]*\*\*(\d+)\*\*\s*条断言",
+        "tests/test_corpus.py",
+    ),
+)
+
+
+def test_a_documented_assertion_count_matches_the_file() -> None:
+    """A number about a test file, checked against the test file.
+
+    The docs lean on these counts as evidence — "fifteen assertions pin what
+    the corpus is" is the sentence that makes a synthetic corpus arguable. A
+    count that has drifted is worse than no count: it is a specific claim,
+    stated with confidence, that nobody can reproduce.
+    """
+    root = Path(__file__).resolve().parents[1]
+
+    for doc_name, pattern, expected_file in COUNT_CLAIMS:
+        doc = (root / doc_name).read_text(encoding="utf-8")
+        matches = re.findall(pattern, doc)
+        assert matches, (
+            f"{doc_name} no longer states an assertion count in the form this "
+            f"gate reads. Either restore the wording or delete the claim — do "
+            f"not leave an unchecked number in the docs."
+        )
+        for groups in matches:
+            claimed = next(g for g in groups if g.isdigit())
+            rel = next(g for g in groups if not g.isdigit())
+            assert rel == expected_file, f"{doc_name}: unexpected target {rel}"
+            source = (root / rel).read_text(encoding="utf-8")
+            actual = len(re.findall(r"^def (test_\w+)", source, re.M))
+            assert int(claimed) == actual, (
+                f"{doc_name} says {claimed} assertions in {rel}, which has "
+                f"{actual}. The claim is the evidence; it has to be countable."
+            )
+
+
 def _mermaid_skeleton(body: str) -> str:
     """The graph a mermaid block claims, with its prose stripped out.
 

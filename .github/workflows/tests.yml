@@ -186,6 +186,19 @@ jobs:
         # being relied on for more than it grants.
         run: python tests/test_deidentify.py
 
+      - name: Real-corpus fetcher — retry category, id namespace, drop policy
+        # Everything the fetcher decides before it touches the network or a
+        # model, which is the part that can be checked in CI at all.
+        #
+        # Three of these exist because three long fetches died to three
+        # different transient network failures, each escaping an `except` that
+        # listed the errors I had thought of instead of the category they
+        # belong to. The rest pin the review's four-way split: a single
+        # "identifies someone" boolean was dropping genuine bug reports for
+        # naming an API they called, and merging the questions again would
+        # quietly remove whatever makes each repository different.
+        run: python tests/test_fetch_real.py
+
       - name: Require full coverage of the security-critical modules
         # These are the structural boundary: the schema parsers, the executor
         # whitelist, the sandbox guard, the sink the executor publishes through,

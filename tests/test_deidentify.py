@@ -79,6 +79,30 @@ def test_handles_with_underscores_are_scrubbed() -> None:
         assert "@reporter-" in clean
 
 
+def test_handles_inside_code_fences_are_scrubbed() -> None:
+    """The leak the code-span exemption caused, found in a review note.
+
+    A drop note quoted `@gouveags` — a handle the scrubber had already been
+    asked to remove. It had removed it from one langchain issue and left it in
+    another, from the same reporter, purely because a GitHub issue template
+    renders its social-handles field inside a code fence and the mention rule
+    skipped code spans wholesale.
+
+    The exemption was there to protect decorators. A surviving handle is a
+    privacy failure and a mangled decorator is a data-quality one, and §6 rule
+    3 settles which of those is acceptable — so the denylist is now the only
+    protection.
+    """
+    for probe in (
+        "X handle: `@gouveags`",
+        "```\n@gouveags\n```",
+        "### Social handles\n```\nX: @gouveags\n```",
+    ):
+        clean, removed = scrub(probe)
+        assert "@gouveags" not in clean, f"leaked from {probe!r}: {clean!r}"
+        assert "mention" in removed
+
+
 def test_underscored_decorators_are_still_left_alone() -> None:
     """Widening the handle shape must not start eating decorators.
 
