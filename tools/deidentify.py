@@ -25,9 +25,19 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
-# A GitHub @mention. The handle shape is GitHub's own: 1-39 characters,
-# alphanumeric or hyphen.
-MENTION = re.compile(r"(?<![\w.])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))\b")
+# An @mention. Underscores are allowed even though GitHub handles cannot
+# contain them, because the field these come from is not always GitHub.
+#
+# The first version used GitHub's own shape — alphanumeric and hyphen — and
+# `@dongxi_nlp` then matched *nothing at all*: the class stopped at the
+# underscore and the trailing `\b` could not match between `i` and `_`, since
+# `_` is a word character. So the regex backtracked to failure and the whole
+# handle passed through untouched. Twitter and X handles allow underscores and
+# langchain's issue template has a social-handles field, so this was a live
+# leak path. The review pass happened to drop every issue carrying one, which
+# is the second layer covering the first layer's bug rather than the first
+# layer working.
+MENTION = re.compile(r"(?<![\w.])@([A-Za-z0-9][A-Za-z0-9_-]{0,38})(?![\w-])")
 
 # Already scrubbed. Without this, re-processing a record hashes the pseudonym
 # again and the same author stops mapping to the same handle — which matters

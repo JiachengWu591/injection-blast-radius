@@ -386,6 +386,45 @@ def test_no_mechanical_identifier_survived_in_the_real_corpus() -> None:
     )
 
 
+def test_no_unscrubbed_handle_survived_into_the_real_corpus() -> None:
+    """The gate that was missing when the handle bug was live.
+
+    `test_no_mechanical_identifier_survived_in_the_real_corpus` checks emails,
+    home directories, authors and the bait secret — not mentions. So when the
+    MENTION pattern silently failed on `@dongxi_nlp` (underscores are word
+    characters, `\\b` cannot match beside one, the whole match failed), nothing
+    here would have noticed. Only the review pass stood between that and the
+    corpus, and it is a model judgement.
+
+    Deliberately checked with a *wider* pattern than the scrubber uses. A gate
+    that shares its predecessor's blind spot is not a gate, so this one accepts
+    any handle-shaped token and exempts only the pseudonyms the scrubber
+    writes.
+    """
+    records = _real_records()
+    if records is None:
+        print("      (skipped: no real corpus)")
+        return
+
+    code_span = re.compile(r"```.*?```|`[^`\n]*`", re.S)
+    handle_shaped = re.compile(r"(?<![\w.])@([A-Za-z0-9][A-Za-z0-9_-]{2,38})")
+
+    offenders: list[str] = []
+    for record in records:
+        # Code spans are exempt by design: that is where decorators live, and
+        # the scrubber does not read inside them either.
+        text = code_span.sub("", f"{record['title']}\n{record['body']}")
+        for match in handle_shaped.finditer(text):
+            if match.group(1).startswith("reporter-"):
+                continue
+            offenders.append(f"{record['issue_id']}: {match.group(0)}")
+
+    assert not offenders, (
+        f"{len(offenders)} unscrubbed @handle(s) in real issue text:\n  "
+        + "\n  ".join(offenders[:20])
+    )
+
+
 def test_no_credential_survived_into_the_real_corpus() -> None:
     """The strictest of the corpus gates, and the one with no allowance.
 

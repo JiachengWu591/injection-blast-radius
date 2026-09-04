@@ -57,6 +57,41 @@ def test_emails_and_mentions_go() -> None:
     assert "@reporter-" in clean
 
 
+def test_handles_with_underscores_are_scrubbed() -> None:
+    """The bug that got through, found by reading why a real issue was dropped.
+
+    The pattern used GitHub's handle shape — alphanumeric and hyphen — so
+    `@dongxi_nlp` matched *nothing*: the class stopped at the underscore and
+    the trailing `\\b` could not match between `i` and `_`, because `_` is a
+    word character. The regex backtracked to failure and the handle passed
+    through untouched.
+
+    It matters because the field these come from is not always GitHub. Twitter
+    and X handles allow underscores, and langchain's issue template has a
+    social-handles section. Nothing leaked only because the review pass
+    dropped every issue that carried one — the second layer covering the
+    first layer's bug.
+    """
+    for handle in ("@dongxi_nlp", "@some_dev_2024", "@a_b_c", "@x_"):
+        clean, removed = scrub(f"ping {handle} about it")
+        assert handle not in clean, f"{handle!r} survived in {clean!r}"
+        assert "mention" in removed, f"not recorded for {handle!r}"
+        assert "@reporter-" in clean
+
+
+def test_underscored_decorators_are_still_left_alone() -> None:
+    """Widening the handle shape must not start eating decorators.
+
+    Allowing underscores brings `@cached_property` and `@lru_cache` into
+    range of the pattern, so the not-a-handle list has to carry them — this is
+    the cost of biasing toward scrubbing, and it needs its own assertion.
+    """
+    code = "@cached_property\n@lru_cache\n@runtime_checkable\ndef f(): pass"
+    clean, removed = scrub(code)
+    assert clean == code, f"a decorator was scrubbed: {clean!r}"
+    assert removed == []
+
+
 def test_home_directories_lose_the_account_name() -> None:
     for raw, name in (
         ("/Users/sarahchen/work/config.yaml", "sarahchen"),
