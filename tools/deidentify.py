@@ -84,6 +84,97 @@ QUOTE_HEADER = re.compile(
     r"(?m)^On .{0,40}\d{4}.{0,40}(?:wrote|schrieb|escribió):\s*$"
 )
 
+# --- Credentials -----------------------------------------------------------
+#
+# People paste API keys into issues by accident. It is common enough that
+# GitHub runs secret scanning for it, and a repository whose issues are about
+# calling paid APIs is the likeliest place of all to find one.
+#
+# PROJECT_SPEC.md §6 rule 3 forbids real credentials absolutely, and §6.1
+# relaxes nothing about it. So this is not a nicety: a real key reaching the
+# corpus would be written to disk and sent to a model provider, and either is a
+# straight violation. The de-identifier had no credential rule at all until a
+# langchain fetch was about to run.
+#
+# Two arms, and one definition shared with the corpus gates so they cannot
+# drift: a known vendor prefix, or an assignment to a secret-ish name whose
+# value actually looks like a secret.
+VENDOR_PREFIXED = re.compile(
+    r"\b(?:sk|pk|rk)[-_][A-Za-z0-9][A-Za-z0-9_-]{11,}"
+    r"|\b(?:ghp|gho|ghs|ghu|ghr|github_pat)_[A-Za-z0-9_]{12,}"
+    r"|\bxox[abpsr]-[A-Za-z0-9-]{12,}"
+    r"|\bAKIA[0-9A-Z]{16}\b"
+    r"|\bAIza[0-9A-Za-z_-]{20,}"
+    r"|\bhf_[A-Za-z0-9]{20,}"
+    r"|\bglpat-[A-Za-z0-9_-]{16,}"
+)
+
+SECRET_ASSIGNMENT = re.compile(
+    r"(\b\w*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|APIKEY)\w*\s*[=:]\s*)(\S+)",
+    re.IGNORECASE,
+)
+
+# Values that follow a secret-ish name but are plainly not secrets:
+# placeholders, masks, booleans, paths, and comma-separated name lists.
+NOT_A_SECRET = re.compile(
+    r"^(?:\[|<|\*|\"|'|\$|%|/|\.|~|\{|`)"
+    r"|^(?:redacted|masked|hidden|none|null|nil|true|false|yes|no|unset|empty"
+    r"|your|my|xxx+|todo|placeholder)\b"
+    r"|,",
+    re.IGNORECASE,
+)
+
+REDACTED = "[redacted-credential]"
+
+
+def _is_secret_value(value: str) -> bool:
+    """Does the value after a secret-ish name actually look like a secret?
+
+    Length, no obvious placeholder, and a mix of letters and digits — a real
+    token has both, while an all-letter value is a word: a filename, a mode, an
+    identifier. Filtering here rather than in the pattern is what keeps
+    `key=[redacted]` (an issue *about* redaction) and
+    `config_keys_overridden=retries,log_level` (a list of names) from being
+    treated as leaks.
+    """
+    value = value.strip().strip("'\"`,;)>")
+    if len(value) < 12 or NOT_A_SECRET.match(value):
+        return False
+    return any(c.isdigit() for c in value) and any(c.isalpha() for c in value)
+
+
+def credential_shaped(text: str) -> list[str]:
+    """Strings in `text` that could be mistaken for a live credential.
+
+    The one definition, shared by the scrubber and by the corpus gates. Two
+    copies of "what looks like a secret" would drift, and the copy that drifted
+    would be the one deciding whether a real key reached disk.
+    """
+    found = [m.group(0) for m in VENDOR_PREFIXED.finditer(text)]
+    found += [
+        m.group(0)
+        for m in SECRET_ASSIGNMENT.finditer(text)
+        if _is_secret_value(m.group(2))
+    ]
+    return found
+
+
+def redact_credentials(text: str) -> str:
+    """Replace credential-shaped strings, keeping the shape that isn't secret.
+
+    `MY_API_KEY=abc123...` becomes `MY_API_KEY=[redacted-credential]`: a triage
+    model legitimately reacts to "there is a key here", and that signal is not
+    the secret. Same reasoning as stubbing a URL's path but keeping its host.
+    """
+    text = VENDOR_PREFIXED.sub(REDACTED, text)
+
+    def redact_assignment(match: re.Match[str]) -> str:
+        if not _is_secret_value(match.group(2)):
+            return match.group(0)
+        return match.group(1) + REDACTED
+
+    return SECRET_ASSIGNMENT.sub(redact_assignment, text)
+
 
 @dataclass(frozen=True)
 class Deidentified:
@@ -159,6 +250,10 @@ def scrub(text: str) -> tuple[str, list[str]]:
         host = match.group(1)
         return f"https://{host}/[path]" if match.group(2) else f"https://{host}"
 
+    # Credentials first, and everywhere including code spans: a leaked key is
+    # most often inside a pasted config block or traceback, which is exactly
+    # what the mention rule deliberately does not look inside.
+    text = apply("credential", redact_credentials, text)
     text = apply("email", lambda s: EMAIL.sub("[email]", s), text)
     text = apply(
         "quote_header", lambda s: QUOTE_HEADER.sub("[quoted reply]", s), text
@@ -214,4 +309,7 @@ def residual_risks() -> tuple[str, ...]:
         "a distinctive setup that identifies one organisation even unnamed",
         "writing style, which is weakly identifying on its own",
         "a name embedded in a path segment that is not a home directory",
+        "a credential with no recognised vendor prefix and no secret-ish "
+        "variable name beside it — a bare high-entropy string is "
+        "indistinguishable from a hash, an id, or base64 data",
     )

@@ -35,6 +35,7 @@ from ibr.fixtures import BAIT_SECRET_VALUE  # noqa: E402
 from ibr.issues import Issue, parse_issue  # noqa: E402
 from ibr.output_audit import audit_output  # noqa: E402
 from ibr.sources import JsonLinesIssueSource  # noqa: E402
+from tools.deidentify import credential_shaped  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CORPUS = ROOT / "sandbox" / "corpus" / "benign.jsonl"
@@ -63,55 +64,28 @@ PRODUCT_ROOT = "blastdemo"
 # cannot tell you about the next one.
 KNOWN_REAL_ROOTS = ("corvid", "orchard", "sparrow", "yamlish", "quillmark")
 
-# Credential-shaped, precisely. Two arms: a known vendor prefix, or an
-# assignment to a secret-ish name whose value actually looks like a secret.
+# Credential-shaped: one definition, imported from the de-identifier rather
+# than restated here. Two copies of "this looks like a key" would drift, and
+# the copy that drifted would be the one deciding whether a real credential
+# reached disk.
 #
-# Deliberately not a generic high-entropy sweep. The corpus contains a base64
-# cache-file header on purpose, because an entropy scanner will want to flag it
-# and a maintainer would not — and a first version of this check also flagged
-# `key=[redacted]'` (an issue *about* redaction) and
+# Deliberately not a generic high-entropy sweep. The synthetic corpus contains
+# a base64 cache-file header on purpose, because an entropy scanner will want
+# to flag it and a maintainer would not — and a first version of this check
+# also flagged `key=[redacted]'` (an issue *about* redaction) and
 # `config_keys_overridden=retries,log_level` (a list of key names). Both are
-# the opposite of a leak, which is why the value is now filtered rather than
-# just measured.
-VENDOR_PREFIXED = re.compile(
-    # The body allows - and _ because real keys are segmented: the project's
-    # own output audit is tested against `sk-live-abcdef0123456789xyz`, and a
-    # first version of this pattern stopped at the second hyphen and missed it.
-    r"\b(?:sk|pk|rk)[-_][A-Za-z0-9][A-Za-z0-9_-]{11,}"
-    r"|\b(?:ghp|gho|ghs|github_pat)_[A-Za-z0-9_]{12,}"
-    r"|\bxox[abpsr]-[A-Za-z0-9-]{12,}"
-    r"|\bAKIA[0-9A-Z]{16}\b"
-    r"|\bAIza[0-9A-Za-z_-]{20,}"
-)
-
-SECRET_ASSIGNMENT = re.compile(
-    r"\b\w*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD)\w*\s*=\s*(\S+)",
-    re.IGNORECASE,
-)
-
-# Values that appear after a secret-ish name but are plainly not secrets:
-# placeholders, masks, booleans, and paths.
-NOT_A_SECRET = re.compile(
-    r"^(?:\[|<|\*|\"|'|\$|%|/|\.|~)"  # [redacted], <token>, ***, $VAR, /path
-    r"|^(?:redacted|masked|hidden|none|null|nil|true|false|yes|no|unset|empty)\b"
-    r"|,",  # a comma-separated list is a list of names, not one secret
-    re.IGNORECASE,
-)
+# the opposite of a leak.
+# Imported, not restated. `tools/deidentify.py` owns the definition because it
+# is the module that has to act on it.
+#
+# The synthetic corpus is allowed credential shapes as long as the line carries
+# a fake marker — the `quotes_secret_shaped` stratum exists to paste them on
+# purpose. The real corpus is allowed none at all.
 
 
 def _credential_shaped(text: str) -> list[str]:
-    """Strings in `text` that could be mistaken for a live credential."""
-    found = [m.group(0) for m in VENDOR_PREFIXED.finditer(text)]
-    for match in SECRET_ASSIGNMENT.finditer(text):
-        value = match.group(1).strip().strip("'\"`,;)")
-        if len(value) < 12 or NOT_A_SECRET.match(value):
-            continue
-        # A real token mixes letters and digits. A value that is all letters is
-        # a word — a filename, a mode, an identifier.
-        if not (any(c.isdigit() for c in value) and any(c.isalpha() for c in value)):
-            continue
-        found.append(match.group(0))
-    return found
+    return credential_shaped(text)
+
 
 # An author is a handle, never a plausible full name.
 HANDLE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,31}$")
@@ -412,6 +386,73 @@ def test_no_mechanical_identifier_survived_in_the_real_corpus() -> None:
     )
 
 
+def test_no_credential_survived_into_the_real_corpus() -> None:
+    """The strictest of the corpus gates, and the one with no allowance.
+
+    The synthetic corpus may carry credential shapes when the line says `fake`
+    — a whole stratum exists to paste them on purpose. Real text gets no such
+    allowance: PROJECT_SPEC.md §6 rule 3 forbids real credentials absolutely
+    and §6.1 relaxes none of it, so any match here is either a real leaked key
+    or a de-identifier that stopped working, and both mean stop.
+
+    This gap was live. The de-identifier had no credential rule at all, and a
+    fetch from a repository whose issues are about calling paid APIs was about
+    to run. People paste keys into issues often enough that GitHub scans for
+    it; the corpus that happened to be clean was six records long.
+    """
+    records = _real_records()
+    if records is None:
+        print("      (skipped: no real corpus)")
+        return
+
+    offenders: list[str] = []
+    for record in records:
+        for found in credential_shaped(f"{record['title']}\n{record['body']}"):
+            offenders.append(f"{record['issue_id']}: {found[:60]!r}")
+
+    assert not offenders, (
+        f"{len(offenders)} credential-shaped string(s) in real issue text:\n  "
+        + "\n  ".join(offenders[:20])
+        + "\n\nEither a real key leaked into the corpus or the redaction "
+        "regressed. Do not relax this check to get past it."
+    )
+
+
+def test_real_corpus_ids_are_namespaced_by_repository() -> None:
+    """Issue numbers are unique within a repository, not across them.
+
+    pandas is around #68000 and vscode is past #200000, so a bare `real-68009`
+    happens not to collide today. Relying on that is how two repositories'
+    issues silently merge into one subject in the sample store, and every
+    per-repository number in the report stops meaning what it says.
+
+    Checked on the finished file rather than trusting the id builder, because
+    a hand-edited or half-migrated corpus is exactly where a duplicate would
+    appear.
+    """
+    records = _real_records()
+    if records is None:
+        print("      (skipped: no real corpus)")
+        return
+
+    ids = [r["issue_id"] for r in records]
+    duplicates = sorted({i for i in ids if ids.count(i) > 1})
+    assert not duplicates, f"duplicate id(s) in the real corpus: {duplicates}"
+
+    for record in records:
+        slug = record.get("stratum", "").removeprefix("real:")
+        assert slug, f"{record['issue_id']}: no repository in the stratum"
+        assert record["issue_id"].startswith(f"real-{slug}-"), (
+            f"{record['issue_id']} is not namespaced by its repository "
+            f"({slug!r}), so it could collide with another repository's issue "
+            "of the same number"
+        )
+        assert record.get("source_repo", "").endswith(f"/{slug}"), (
+            f"{record['issue_id']}: source_repo "
+            f"{record.get('source_repo')!r} does not match stratum {slug!r}"
+        )
+
+
 def test_every_real_record_carries_its_audit_trail() -> None:
     """`removed` says what was taken out of a real person's text.
 
@@ -424,9 +465,20 @@ def test_every_real_record_carries_its_audit_trail() -> None:
         return
 
     for record in records:
-        assert record.get("stratum") == "real", (
-            f"{record['issue_id']}: stratum is {record.get('stratum')!r}, so it "
-            "would be pooled with the synthetic strata"
+        stratum = record.get("stratum", "")
+        # `real:<repo-slug>`. The repository *is* the stratum, so the
+        # measurement's per-stratum breakdown reports per-repository for free —
+        # and "does the rate differ by where the issues came from" is the
+        # question the multi-repository corpus exists to answer.
+        assert stratum.startswith("real:"), (
+            f"{record['issue_id']}: stratum is {stratum!r}, expected "
+            "`real:<repo-slug>`. A bare `real` loses the per-repository "
+            "breakdown, and anything without the prefix would be pooled with "
+            "the synthetic strata."
+        )
+        assert stratum not in STRATA, (
+            f"{record['issue_id']}: stratum {stratum!r} collides with a "
+            "synthetic stratum name"
         )
         removed = record.get("removed")
         assert isinstance(removed, list) and "author" in removed, (

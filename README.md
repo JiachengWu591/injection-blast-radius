@@ -463,42 +463,75 @@ rather than trusting one call.
 
 That corpus is synthetic, so the obvious objection is that a model wrote it and
 a model audits it — correlated blind spots would produce exactly this clean a
-result. So the same measurement was run on **165 real issues from
-`pandas-dev/pandas`**, fetched read-only and de-identified
+result. So the same measurement was run on **360 real issues, 90 from each of
+four repositories**, fetched read-only and de-identified
 (`mise run corpus:real`, then `mise run fp-rate:real`).
 
-| Corpus | Blocked | 95% CI | Flagged `suspicious` | Disagreed with itself |
+Four repositories rather than one, chosen for how differently each answers
+"what does an ordinary issue look like" — because raising n narrows an interval,
+while spread is what says the interval was measured on a population worth
+generalising from at all.
+
+| Corpus | n | Blocked | 95% CI | `suspicious` |
 |---|---|---|---|---|
-| Synthetic, stratified | 0/165 | [0.0%, 2.3%] | 2/165 | 2/165 |
-| **Real, `pandas-dev/pandas`** | **0/165** | **[0.0%, 2.3%]** | **0/165** | **0/165** |
-| Difference (real − synthetic) | — | [−2.3%, +2.3%] | [−4.3%, +1.2%] | — |
+| Synthetic, stratified | 165 | 0 | [0.0%, 2.3%] | 2 |
+| `pandas` — library, technical, experienced contributors | 90 | 0 | [0.0%, 4.1%] | 0 |
+| `ollama` — end-user heavy: log dumps, Windows paths | 90 | 0 | [0.0%, 4.1%] | 2 |
+| `ant-design` — non-English dominant, 67/90 with CJK text | 90 | 0 | [0.0%, 4.1%] | 1 |
+| `langchain` — LLM-adjacent: prompts, API keys, injection talk | 90 | 0 | [0.0%, 4.1%] | 1 |
+| **All real** | **360** | **0** | **[0.0%, 1.1%]** | **4** |
 
-Both difference intervals span zero, so **no difference was detected**. Note
-what that is and is not: with 165 issues per group this experiment would need
-about **647 per group** to separate 0.0% from 1.2%. "No difference detected" here
-means the experiment was not powerful enough to find one, not that the synthetic
-corpus is established as representative.
+**0/360, 95% CI [0.0%, 1.1%]** — and zero in every repository separately, across
+issues that share almost nothing in shape. Median body length runs from 732
+characters (`ant-design`) to 3,777 (`langchain`); one repository is two-thirds
+Chinese; 232 distinct authors. Four calls in 1,080 came back `suspicious` and
+none came back `high_risk`.
 
-The result that did surprise me is the direction. **The synthetic corpus was
-harder than the real one** — it produced two `suspicious` verdicts and two
-run-to-run disagreements where real pandas issues produced none of either. That
-is because its strata were built to sit on the false-positive boundary: real bug
-reports do not usually paste a credential-shaped string or discuss prompt
-injection as subject matter. So the two corpora do different jobs. The synthetic
-one is a stress test; the real one is a check that the stress test was not
-measuring an artefact.
+The result that surprised me is the direction. **The synthetic corpus was harder
+than any of the real ones** — it produced more `suspicious` verdicts at 165
+issues than 360 real issues did. Its strata were built to sit on the
+false-positive boundary, and real bug reports do not usually paste a
+credential-shaped string or discuss prompt injection as subject matter. So the
+two corpora do different jobs: the synthetic one is a stress test, the real ones
+check the stress test was not measuring an artefact.
 
-### What this measurement cannot tell you
+### The filter that makes this corpus less representative than it looks
 
-**"Real" here means real *pandas*.** Its issues are technical, mostly English,
-and written by an experienced contributor base. A support tracker for a consumer
-product would look nothing like it, and nothing here says what the audit would
-do with that. One repository is one sample of what "an ordinary issue" means.
+De-identification drops any issue whose prose might identify someone, and the
+drop rate is **not** uniform:
 
-**And the synthetic corpus is still synthetic.** The real-data run rules out the
+| Repository | Reviewed | Dropped | Rate | 95% CI | vs `pandas` |
+|---|---|---|---|---|---|
+| `ant-design` | 94 | 4 | 4.3% | [1.7%, 10.4%] | [−9.2%, +5.0%] |
+| `pandas` | 96 | 6 | 6.2% | [2.9%, 13.0%] | reference |
+| `ollama` | 102 | 12 | 11.8% | [6.9%, 19.4%] | [−2.8%, +13.9%] |
+| **`langchain`** | 121 | **31** | **25.6%** | [18.7%, 34.1%] | **[+9.7%, +28.5%]** |
+
+`langchain`'s difference from `pandas` **excludes zero**, so it is a real effect
+rather than noise. Its issues discuss organisations, keys and prompts, which is
+exactly what the reviewer drops.
+
+That matters, and it cuts against the expansion. Dropping the issues that name
+things systematically removes the ones that made a repository *different* — so
+the surviving `langchain` sample is biased toward whichever of its issues most
+resemble an ordinary bug report. The expansion partly defeats itself, and the
+right response is to publish the drop rates rather than loosen the review, which
+[§6.1](./PROJECT_SPEC.md) does not permit.
+
+### What this measurement still cannot tell you
+
+**Four repositories is four samples of "an ordinary issue", not the space of
+them.** All four are developer-facing open source on GitHub. A commercial
+support desk, an internal tracker, or a forum where users paste screenshots and
+invoices would look nothing like any of them.
+
+**The synthetic corpus is still synthetic.** The real runs rule out the
 strongest version of the correlated-blind-spot worry — that generated issues are
-systematically easy for the auditor — and it rules it out only at the resolution
-this n supports.
+systematically easy for the auditor — at the resolution 360 issues supports, and
+no further.
+
+**A null result is still a null result.** Zero blocks in 1,080 calls bounds the
+rate at 1.1%; it does not establish that the rate is zero.
 
 So the claim is narrow on purpose: this is what the audit does to issues of this
 *shape*. It does not establish what it would do to a real one. Nine assertions

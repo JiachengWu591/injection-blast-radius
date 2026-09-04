@@ -161,6 +161,85 @@ def test_nothing_is_removed_from_text_that_carries_no_identifiers() -> None:
     assert removed == []
 
 
+# --- credentials -----------------------------------------------------------
+
+
+def test_real_looking_credentials_are_redacted() -> None:
+    """PROJECT_SPEC.md §6 rule 3 is absolute, and §6.1 relaxes none of it.
+
+    People paste API keys into issues by accident often enough that GitHub runs
+    secret scanning for it, and a repository whose issues are about calling
+    paid APIs is the likeliest place to find one. The de-identifier had no
+    credential rule at all until a langchain fetch was about to run — a real
+    key would have been written to disk and sent to a model provider.
+    """
+    for raw, secret in (
+        ("OPENAI_API_KEY=sk-proj-a1b2c3d4e5f6g7h8i9j0", "sk-proj-a1b2c3"),
+        ("token: ghp_aBcD1234567890efGHij", "ghp_aBcD1234567890"),
+        ("export HF_TOKEN=hf_QwErTy1234567890AsDfGh", "hf_QwErTy"),
+        ("AWS key AKIA1234567890ABCDEF in the log", "AKIA1234567890ABCDEF"),
+        ("MY_SECRET = z9y8x7w6v5u4t3s2r1q0", "z9y8x7w6v5u4"),
+    ):
+        clean, removed = scrub(raw)
+        assert secret not in clean, f"{secret!r} survived in {clean!r}"
+        assert "credential" in removed, f"not recorded for {raw!r}"
+        assert "[redacted-credential]" in clean
+
+
+def test_the_variable_name_survives_the_redaction() -> None:
+    """"There is a key here" is a signal a triage model legitimately reacts to,
+    and that signal is not the secret. Same reasoning as keeping a URL's host."""
+    clean, _ = scrub("OPENAI_API_KEY=sk-proj-a1b2c3d4e5f6g7h8i9j0")
+    assert clean.startswith("OPENAI_API_KEY=")
+    assert clean.endswith("[redacted-credential]")
+
+
+def test_credentials_are_redacted_inside_code_blocks_too() -> None:
+    """Where a leaked key actually lives.
+
+    The mention rule deliberately does not look inside code spans, because
+    that is where decorators are. A pasted config block or traceback is
+    exactly where a key is, so the credential rule must not inherit that
+    exemption.
+    """
+    block = "```\nOPENAI_API_KEY=sk-live-abcdef0123456789xyz\n```"
+    clean, removed = scrub(block)
+    assert "sk-live-abcdef0123456789xyz" not in clean
+    assert "credential" in removed
+
+
+def test_things_that_merely_mention_a_key_are_left_alone() -> None:
+    """Over-redaction damages the data, and most talk about keys is just talk."""
+    for benign in (
+        "key=[redacted]",
+        "config_keys_overridden=retries,log_level,cache.max",
+        "TOKEN_PATH=/etc/blastdemo/token",
+        "OPENAI_API_KEY=your-key-here",
+        "set OPENAI_API_KEY to whatever you use",
+        "STRICT_TOKEN_MODE=true",
+        "the api_key argument is documented wrong",
+    ):
+        clean, removed = scrub(benign)
+        assert "credential" not in removed, f"{benign!r} was read as a secret"
+        assert clean == benign
+
+
+def test_the_credential_detector_has_one_definition() -> None:
+    """The scrubber and the corpus gates must agree on what a secret is.
+
+    Two copies of "this looks like a key" would drift, and the copy that
+    drifted would be the one deciding whether a real credential reached disk.
+    """
+    from tools.deidentify import credential_shaped
+
+    assert credential_shaped("OPENAI_API_KEY=sk-proj-a1b2c3d4e5f6g7h8i9j0")
+    assert not credential_shaped("key=[redacted]")
+    # And the finding must be what redaction acts on, not a parallel opinion.
+    leaky = "token: ghp_aBcD1234567890efGHij"
+    assert credential_shaped(leaky)
+    assert not credential_shaped(scrub(leaky)[0])
+
+
 def test_the_residual_risks_are_named_and_not_empty() -> None:
     """The load-bearing assertion.
 
