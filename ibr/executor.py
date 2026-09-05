@@ -32,8 +32,17 @@ from .output_audit import OutputAuditResult, audit_output
 from .schemas import SUGGESTED_ACTIONS, ReaderOutput
 from .sinks import DEFAULT_SINK, ActionSink
 
-# Every byte this system can ever publish, enumerated. Static text only — no
-# interpolation of anything derived from the issue or from model output.
+# Every byte of comment *body* this system can ever publish, enumerated. Static
+# text only — nothing derived from the issue or from model output is
+# interpolated into these strings.
+#
+# The precise claim, because the loose version of it was wrong. A published
+# line is a template plus the sink's own framing, and that framing carries
+# `issue_id`: `SandboxActionSink` writes `comment on issue #{issue_id}` above
+# the body and `issue #{issue_id}: {label}` for a label. So the byte set below
+# is closed, and the published line is closed only because `Issue.__post_init__`
+# constrains the id to `[A-Za-z0-9._-]{1,64}`. Nothing model-generated reaches
+# either — that part was always true — but "derived from the issue" was not.
 COMMENT_TEMPLATES: dict[str, str] = {
     "bug": (
         "Thanks for the report — this has been triaged as a **bug** and queued "

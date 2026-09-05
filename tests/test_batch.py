@@ -223,16 +223,50 @@ def test_an_operator_can_resolve_a_dangling_intent_either_way() -> None:
 def test_the_ledger_tolerates_a_torn_last_line_only() -> None:
     """A crash mid-append truncates the last line; anything else is corruption.
 
-    The same rule the sample store settled on. Tolerating a bad line anywhere
-    would mean a ledger could lose an arbitrary action and still load, and the
-    ledger's whole job is to know what already happened.
-    """
-    ledger = _fresh_ledger()
-    ledger.done(ActionKey.of("label", "77", "bug"))
-    sandbox_fs.append_text(LEDGER, '{"key": "label:78:abc", "phase"')
-    assert ledger.state().get("label:77:bug") is None or True
-    assert "label" in str(ledger.state())
+    The same rule the sample store settled on: a malformed line is tolerated
+    only when it is both last *and* unterminated. Tolerating a bad line
+    anywhere would mean a ledger could lose an arbitrary action and still
+    load, and the ledger's whole job is to know what already happened.
 
+    The first version of this test asserted
+    `ledger.state().get(key) is None or True`, which cannot fail, so it agreed
+    with either rule. The three cases below are the ones that separate them.
+    """
+    # 1. Genuinely torn: last line, no trailing newline. Tolerated, and the
+    #    earlier records still load.
+    ledger = _fresh_ledger()
+    settled = ActionKey.of("label", "77", "bug")
+    ledger.done(settled)
+    sandbox_fs.append_text(LEDGER, '{"key": "label:78:abc", "phase"')
+    state = ledger.state()
+    assert state.get(str(settled)) == "done", (
+        "a torn final line lost the completed record above it, so a resumed "
+        f"run would redo an action that already happened: {state}"
+    )
+    assert "label:78:abc" not in state, "a half-written line was believed"
+
+    # 2. Last line, but the file is terminated. That is damage, not an
+    #    interrupted write — and it is the case the position-only rule got
+    #    wrong. A lost `done` here leaves an intent reading as
+    #    never-attempted, and the resume publishes twice.
+    sandbox_fs.write_text(
+        LEDGER, '{"key": "x", "phase": "intent"}\n{"key": "y", "phase"}\n'
+    )
+    try:
+        ActionLedger(path=LEDGER).state()
+    except DanglingIntent as exc:
+        assert "cannot be repaired by inference" in str(exc)
+    else:
+        raise AssertionError(
+            "a corrupt but fully-terminated last line was tolerated. `_append` "
+            "writes json + newline per call, so a file ending in a newline "
+            "holds only whole records: this one was corrupted by something "
+            "other than an interrupted write, and dropping it silently is how "
+            "a lost `done` turns into a duplicate publish."
+        )
+
+    # 3. Corrupt in the middle, terminated. Fatal under either rule; kept so
+    #    the obvious case cannot regress while attention is on case 2.
     sandbox_fs.write_text(LEDGER, '{"broken"\n{"key": "x", "phase": "done"}\n')
     try:
         ActionLedger(path=LEDGER).state()

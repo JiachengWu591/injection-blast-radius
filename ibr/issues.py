@@ -8,6 +8,7 @@ anywhere in this project (PROJECT_SPEC.md §6) — the "issue" is a fixture and 
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +16,22 @@ from . import sandbox_fs
 from .config import ISSUES_DIR
 
 _REQUIRED_FIELDS = ("issue_id", "title", "author", "body")
+
+# The one field of an issue that is not treated as untrusted downstream.
+#
+# `title` and `body` never leave the log and the Reader's summary of them never
+# reaches a published action. `issue_id` does: `SandboxActionSink` interpolates
+# it into the comment header and into every label line, and the output audit
+# runs on the comment *body* before that, so the id is text from outside that
+# reaches a published file with nothing between. On the label path there is no
+# output audit at all, and the id is the whole variable part of the line.
+#
+# So it is constrained here rather than in `parse_issue`. A source is anything
+# that returns an `Issue` — ARCHITECTURE.md invites a webhook source that
+# builds the frozen dataclass directly and never sees the parser — and a rule
+# only one of three construction paths enforces is not a structural rule. None
+# of the 525 shipped corpus ids or any test id falls outside this class.
+_ISSUE_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 
 class MalformedIssue(RuntimeError):
@@ -26,13 +43,24 @@ class Issue:
     """One simulated GitHub issue.
 
     `body` is untrusted content by definition: in the threat model this project
-    demonstrates, anyone on the internet can put anything in it.
+    demonstrates, anyone on the internet can put anything in it. `issue_id` is
+    equally untrusted and, unlike `body`, ends up in published output — so it
+    is the one field with a shape.
     """
 
     issue_id: str
     title: str
     author: str
     body: str
+
+    def __post_init__(self) -> None:
+        if not _ISSUE_ID.match(self.issue_id):
+            raise MalformedIssue(
+                f"issue_id {self.issue_id!r} is not "
+                f"{_ISSUE_ID.pattern}. The id is interpolated into published "
+                "comment headers and label lines, so it is the one issue "
+                "field with a shape. Fail closed rather than publish it."
+            )
 
     @property
     def source_path(self) -> Path:

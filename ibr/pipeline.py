@@ -383,8 +383,16 @@ def run_isolated(
     )
 
     # --- The structured boundary -------------------------------------------
-    # Everything above this line has seen the raw issue text. Everything below
-    # it sees only `reader_output`, and only its two enum fields.
+    # Everything above this line has seen the raw issue text. Below it, the
+    # only fields that reach the Executor are the two enum fields.
+    #
+    # Said that way on purpose: the free text is read once more, immediately
+    # below, to record how much of it was held back — lengths and reprs, into
+    # the StageRecord and nowhere else. An earlier version of this comment said
+    # everything below saw "only its two enum fields", which the next statement
+    # contradicts. What matters is the destination, not the read: the log is a
+    # sink for humans, the Executor is a sink for actions, and only the enums
+    # cross into the second one.
     result.stages.append(
         StageRecord(
             stage="structured_boundary",

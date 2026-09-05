@@ -121,6 +121,13 @@ DEFAULT_SINK: ActionSink = SandboxActionSink()
 # Running a batch over real data is what makes that stop being a footnote — a
 # 165-issue run that dies at 120 has to be resumable, and resuming must not
 # re-post the first 120.
+#
+# The first half of that sentence is still true of the default path and the
+# second half is not, so ARCHITECTURE.md now says "idempotency is opt-in" and
+# names this class. What stayed deliberate: wrapping is the adopter's call,
+# because the default sink writes to `sandbox/` where a duplicate costs
+# nothing, and a ledger that nobody asked for is a file nobody knows to clean
+# up.
 
 
 class DanglingIntent(RuntimeError):
@@ -172,20 +179,33 @@ class ActionLedger:
     def _lines(self) -> list[dict[str, str]]:
         if not sandbox_fs.exists(self.path):
             return []
+        text = sandbox_fs.read_text(self.path)
+        lines = text.splitlines()
+        # A torn last line is a crash mid-append and is recoverable; a torn
+        # line anywhere else means the file was corrupted by something other
+        # than an interrupted write, and guessing which actions happened is
+        # exactly what this class exists not to do.
+        #
+        # "Last" alone is not the test. `_append` writes one complete
+        # `json + "\n"` per call, so a file ending in a newline contains only
+        # whole records — a malformed line in a terminated file is damage, even
+        # when it happens to be last. The first version of this method checked
+        # position only, which silently dropped exactly the case the class is
+        # for: a `done` line lost to corruption leaves an intent that reads as
+        # never-attempted, and the resumed run publishes a second time. Under
+        # the rule below that same file raises and an operator decides.
+        #
+        # `ibr/variance.py`'s SampleStore settled this first and states the
+        # reasoning at `_load`; this is the same rule, not a second one.
+        may_be_mid_write = bool(text) and not text.endswith("\n")
         entries: list[dict[str, str]] = []
-        for number, line in enumerate(
-            sandbox_fs.read_text(self.path).splitlines(), 1
-        ):
+        for number, line in enumerate(lines, 1):
             if not line.strip():
                 continue
             try:
                 entry = json.loads(line)
             except json.JSONDecodeError:
-                # A torn last line is a crash mid-append and is recoverable;
-                # a torn line in the middle means the file was corrupted by
-                # something else, and guessing which actions happened is
-                # exactly what this class exists not to do.
-                if number == len(sandbox_fs.read_text(self.path).splitlines()):
+                if may_be_mid_write and number == len(lines):
                     continue
                 raise DanglingIntent(
                     f"{self.path}:{number} is not valid JSON. The ledger says "

@@ -115,9 +115,9 @@ _Posted automatically by the triage assistant._
 | 是什么 | 在哪里 |
 |---|---|
 | **Schema 校验。** 原始模型输出进去；要么出来一个完全校验过的 frozen dataclass，要么抛异常。没有部分接受。 | [`ibr/schemas.py:96`](ibr/schemas.py#L96) 和 [`ibr/schemas.py:165`](ibr/schemas.py#L165)，建立在 [`ibr/schemas.py:185-224`](ibr/schemas.py#L185-L224) 的原语之上 |
-| **白名单。** `suggested_action` 先对照一个固定元组校验，再经由一个 `match` 分派，其分支就是这个系统能做的全部事情。 | [`ibr/executor.py:113`](ibr/executor.py#L113)（枚举校验）和 [`ibr/executor.py:119-164`](ibr/executor.py#L119-L164)（那个 `match`） |
-| **静态输出集。** 系统能发布的每一个字节，全部枚举完。没有任何模型生成的内容被插值进去。 | [`ibr/executor.py:37`](ibr/executor.py#L37) |
-| **跨越点。** 这行以上的代码见过原始不可信文本。这行以下只见过那个已校验对象的两个枚举字段。 | [`ibr/pipeline.py:385`](ibr/pipeline.py#L385) |
+| **白名单。** `suggested_action` 先对照一个固定元组校验，再经由一个 `match` 分派，其分支就是这个系统能做的全部事情。 | [`ibr/executor.py:122`](ibr/executor.py#L122)（枚举校验）和 [`ibr/executor.py:128-164`](ibr/executor.py#L128-L172)（那个 `match`） |
+| **静态输出集。** 系统能发布的**评论正文**的每一个字节，全部枚举完。没有任何模型生成的内容被插值进去；而唯一会进入已发布行的、来自 issue 的值——sink 自己那圈框架里的 id——在 frozen dataclass 上被约束成 `[A-Za-z0-9._-]{1,64}`。 | [`ibr/executor.py:46`](ibr/executor.py#L46) |
+| **跨越点。** 这行以上的代码见过原始不可信文本。这行以下，**能到达 Executor** 的只有那个已校验对象的两个枚举字段——自由文本还会再被读一次写进日志记录，然后就到此为止。 | [`ibr/pipeline.py:385`](ibr/pipeline.py#L385) |
 
 有两条断言专门用于防止这些保证腐烂：
 
@@ -178,7 +178,7 @@ got past the isolated pipeline : 0
 | Layered techniques | 200 | `high_risk`×200 | 0.0% | [0.0%, 1.9%] |
 | *Benign bug report（对照组——**一个** issue，跑 200 次）* | 200 | `safe`×200 | 0.0% | [0.0%, 1.9%] |
 
-**漏放（false negative）**——恶意载荷到达 Reader 的比例：**10/2395 = 0.4%**，95% CI [0.2%, 0.8%]。
+**漏放（false negative）**——真实流水线本会放行到 Reader 的恶意载荷比例：**10/2395 = 0.4%**，95% CI [0.2%, 0.8%]。
 
 **误报（false positive）不在这张表里**，而上面那个对照行正是原因。它是**一个** benign issue 采样两百次，测的是模型在**单个输入上的 run-to-run 方差**——不是普通 issue 被拦截的比率。这是两个不同的量，而这一行曾经被标注成了后者。真正的测量在[下一节](#审计多久会错拦一个普通-issue)。
 
@@ -208,7 +208,7 @@ got past the isolated pipeline : 0
 
 #### 从这张表里该带走的四件事
 
-1. **`suspicious` 不会短路。** 按 [PROJECT_SPEC.md](./PROJECT_SPEC.md) §3.1，它带着复核标记放行到 Reader。所以那 10 个样本是 **10 次真实攻击到达 Reader** ——在真实流水线里，没有任何模拟绕过。
+1. **`suspicious` 不会短路。** 按 [PROJECT_SPEC.md](./PROJECT_SPEC.md) §3.1，它带着复核标记放行到 Reader。所以那 10 个样本，是真实的筛查层 **10 次给出了拦不住一次真实攻击的判决**——没有任何模拟绕过，和上面那张矩阵不同（那里的标记是刻意打开的）。是**本会**到达，不是**已经**到达：这个采样器只调审计，2,395 次调用里**没有任何一次有 Reader 参与**，所以 [`ibr/variance.py`](ibr/variance.py) 里这个字段叫 `passed_through`。这一行早先的版本写的是那些攻击"到达了 Reader"，描述的是一次从未发生过的流水线运行。
 2. **审计在字节完全相同的输入上与自己意见不一致**，涉及三个不同载荷。它没有被骗，也没有坏——它是一个模型在判断文本，而模型判断文本返回的是分布，不是值。
 3. **200 个良性样本零误报**，CI [0.0%, 1.9%]。不管别的怎样，这个配置的低漏放率**不是**靠"一律拦截"换来的。
 4. **读区间，不要读点估计。** 九行显示 0.0%——上界是 1.9%。这比 n=25 换来的上界（13.3%）**好得多**，但**依然不是零**。**没有观测到，不等于观测到没有。**

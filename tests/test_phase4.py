@@ -198,9 +198,9 @@ def test_documentation_line_citations_still_point_at_the_right_code() -> None:
     anchors = {
         ("ibr/schemas.py", 96): "def parse_audit_verdict",
         ("ibr/schemas.py", 165): "def parse_reader_output",
-        ("ibr/executor.py", 37): "COMMENT_TEMPLATES",
-        ("ibr/executor.py", 113): "if action not in SUGGESTED_ACTIONS",
-        ("ibr/executor.py", 119): "match action:",
+        ("ibr/executor.py", 46): "COMMENT_TEMPLATES",
+        ("ibr/executor.py", 122): "if action not in SUGGESTED_ACTIONS",
+        ("ibr/executor.py", 128): "match action:",
         ("ibr/pipeline.py", 385): "The structured boundary",
         ("ibr/baseline_agent.py", 149): "def _post_comment_impl",
         # The primitives README.md's schema row points at, and the enum tuple
@@ -208,7 +208,10 @@ def test_documentation_line_citations_still_point_at_the_right_code() -> None:
         # structural boundary actually is" table and neither was pinned, which
         # is how the crossing-point link rotted unnoticed.
         ("ibr/schemas.py", 185): "def ",
-        ("ibr/executor.py", 164): "no_action",
+        # The end of the `match`, cited as the closing bound of the whitelist
+        # range. `case _:` is the fall-through that makes the set closed, so
+        # pinning the arm rather than the word is the stronger check.
+        ("ibr/executor.py", 172): "case _:",
     }
     for (rel, line_no), expected in anchors.items():
         line = (root / rel).read_text(encoding="utf-8").splitlines()[line_no - 1]

@@ -213,11 +213,19 @@ jobs:
         #
         # ibr/sinks.py joined the list when the executor stopped writing files
         # itself: an untested branch in a sink is an untested branch on the
-        # publication path. ibr/sources.py deliberately did not — it decides
-        # what gets read, and no source can widen the set of reachable actions.
+        # publication path. ibr/output_audit.py joined it later for the same
+        # reason — it runs inside _publish, before the sink, and is the last
+        # check before anything becomes public. ibr/sources.py deliberately
+        # did not: it decides what gets read, and no source can widen the set
+        # of reachable actions.
+        #
+        # This list must stay identical to COVERAGE_GATED in verify.py, and
+        # tests/test_onboarding.py asserts that it does. Two hand-maintained
+        # lists would drift, and the one that drifted would be this one — the
+        # copy that blocks a merge.
         run: |
           coverage report --show-missing \
-            --include='ibr/schemas.py,ibr/executor.py,ibr/sandbox_fs.py,ibr/config.py,ibr/sinks.py' \
+            --include='ibr/schemas.py,ibr/executor.py,ibr/sandbox_fs.py,ibr/config.py,ibr/sinks.py,ibr/output_audit.py' \
             --fail-under=100
 
       - name: Coverage summary (informational)

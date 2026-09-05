@@ -44,7 +44,7 @@ flowchart TD
     subgraph l5["layer 5 · measurement, not architecture"]
         comparison["comparison<br/>the six-scenario matrix"]
         variance["variance<br/>sampling, Wilson/Newcombe"]
-        batch["batch<br/>corpus runner: resumable, idempotent"]
+        batch["batch<br/>corpus runner: concurrent, resumable"]
     end
     subgraph l4["layer 4 · the defended path"]
         pipeline["pipeline<br/>audit → Reader → BOUNDARY → Executor → output audit"]
@@ -363,7 +363,7 @@ flowchart LR
 A fully captured Reader gets to pick one of four actions and one of four issue
 types. Sixteen combinations, enumerated before the attacker arrived. The two
 fields it can write anything at all into reach the log and nothing else —
-[`ibr/executor.py:119`](ibr/executor.py#L119) is the `match`, and the whole file
+[`ibr/executor.py:128`](ibr/executor.py#L128) is the `match`, and the whole file
 never mentions `reasoning` or `summary` outside the logging record.
 
 That is the difference between the two materials: the audit *probably* stops an
@@ -458,8 +458,15 @@ integrate.**
 - **No authorisation model.** The executor decides *what* to do, never *whether
   the requester may*. A production system needs that check somewhere, and it is
   not here.
-- **No idempotency.** Running the same issue twice posts twice. A real sink
-  needs a dedupe key.
+- **Idempotency is opt-in, and off by default.** An unwrapped sink posts
+  twice on a rerun, because [`DEFAULT_SINK`](ibr/sinks.py) writes to
+  `sandbox/` where a duplicate costs nothing. What you do *not* have to build
+  is the dedupe: `IdempotentSink(inner=YourSink())` is a two-phase ledger —
+  intent before the call, `done` after — that refuses on a dangling intent
+  rather than choosing for you between a duplicate post and a lost action.
+  Wrapping is the adopter's decision, and `run_batch` also needs
+  `already_done=` to skip what a previous run finished, so neither `batch` nor
+  the pipeline is idempotent on its own.
 - **No backpressure or rate limiting.** The sampling harness runs 16 concurrent
   calls because that is fine against one provider and one key; it is not a
   pattern to copy.

@@ -28,7 +28,7 @@ flowchart TD
     subgraph l5["layer 5 · 测量工具，不是架构"]
         comparison["comparison<br/>六场景矩阵"]
         variance["variance<br/>采样，Wilson/Newcombe 区间"]
-        batch["batch<br/>语料批量运行器：可续跑、幂等"]
+        batch["batch<br/>语料批量运行器：可并发、可续跑"]
     end
     subgraph l4["layer 4 · 被防御的那条路径"]
         pipeline["pipeline<br/>审计 → Reader → 边界 → Executor → 输出审计"]
@@ -317,7 +317,7 @@ flowchart LR
     class out safe
 ```
 
-一个被完全攻陷的 Reader，能挑的是四个动作之一、四个 issue 类型之一。**十六种组合，在攻击者到场之前就已经枚举完了。** 而它唯一能随便写点什么进去的那两个字段，只到达日志，别处都到不了——[`ibr/executor.py:119`](ibr/executor.py#L119) 是那个 `match`，而整个文件除了日志记录之外**从不提及** `reasoning` 或 `summary`。
+一个被完全攻陷的 Reader，能挑的是四个动作之一、四个 issue 类型之一。**十六种组合，在攻击者到场之前就已经枚举完了。** 而它唯一能随便写点什么进去的那两个字段，只到达日志，别处都到不了——[`ibr/executor.py:128`](ibr/executor.py#L128) 是那个 `match`，而整个文件除了日志记录之外**从不提及** `reasoning` 或 `summary`。
 
 这就是两种材料的差别：审计**大概**能挡住一次攻击；而这个东西**限定**了任何攻击最多能造成什么，并且这个界限不会因为攻击者变强而移动。
 
@@ -381,6 +381,6 @@ Executor 通过 sink 发布，而不再直接调用 `sandbox_fs`。**`DryRunSink
 ## 这套架构**不**提供的东西
 
 - **没有授权模型。** Executor 决定*做什么*，从不决定*请求者是否有权*。生产系统需要在某处做这个检查，而它不在这里。
-- **没有幂等性。** 同一个 issue 跑两次会发两次。真实 sink 需要一个去重键。
+- **幂等是可选的，而且默认关闭。** 未包装的 sink 重跑一次就会发两次——因为 [`DEFAULT_SINK`](ibr/sinks.py) 写的是 `sandbox/`，在那里发重了不花任何代价。但你**不需要**自己造去重：`IdempotentSink(inner=YourSink())` 是一个两阶段账本——调用前落 intent、调用后落 `done`——遇到悬空 intent 时**拒绝执行**，而不是替你在"可能重复发布"和"可能丢动作"之间选一个。包不包是接入方的决定，而且 `run_batch` 还需要传 `already_done=` 才会跳过上一轮已完成的部分——所以 `batch` 和流水线本身都不是幂等的。
 - **没有背压或限流。** 采样工具用 16 路并发，是因为对单个 provider、单把 key 而言这没问题；**这不是一个该照抄的模式**。
 - **概率层依然是概率性的。** 接入真实数据不会让审计变可靠。它的漏放率实际是多少，见 [README.zh-CN.md](./README.zh-CN.md) 里的测量。

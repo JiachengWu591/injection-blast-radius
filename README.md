@@ -144,9 +144,9 @@ anything if you can point at the lines that implement it. Four places:
 | What | Where |
 |---|---|
 | **Schema validation.** Raw model output goes in; either a fully validated frozen dataclass comes out, or it raises. No partial acceptance. | [`ibr/schemas.py:96`](ibr/schemas.py#L96) and [`ibr/schemas.py:165`](ibr/schemas.py#L165), built on the primitives at [`ibr/schemas.py:185-224`](ibr/schemas.py#L185-L224) |
-| **The whitelist.** `suggested_action` is checked against a fixed tuple, then dispatched through a `match` whose arms are the complete set of things this system can do. | [`ibr/executor.py:113`](ibr/executor.py#L113) (enum check) and [`ibr/executor.py:119-164`](ibr/executor.py#L119-L164) (the `match`) |
-| **The static output set.** Every byte the system can publish, enumerated. Nothing model-generated is interpolated in. | [`ibr/executor.py:37`](ibr/executor.py#L37) |
-| **The crossing point.** Above this line, code has seen raw untrusted text. Below it, only the validated object's two enum fields. | [`ibr/pipeline.py:385`](ibr/pipeline.py#L385) |
+| **The whitelist.** `suggested_action` is checked against a fixed tuple, then dispatched through a `match` whose arms are the complete set of things this system can do. | [`ibr/executor.py:122`](ibr/executor.py#L122) (enum check) and [`ibr/executor.py:128-164`](ibr/executor.py#L128-L172) (the `match`) |
+| **The static output set.** Every byte of comment body the system can publish, enumerated. Nothing model-generated is interpolated in, and the one issue-derived value that reaches a published line — the id, in the sink's own framing — is constrained to `[A-Za-z0-9._-]{1,64}` on the frozen dataclass. | [`ibr/executor.py:46`](ibr/executor.py#L46) |
+| **The crossing point.** Above this line, code has seen raw untrusted text. Below it, only the validated object's two enum fields reach the Executor — the free text is read once more into the log record and goes no further. | [`ibr/pipeline.py:385`](ibr/pipeline.py#L385) |
 
 Two of the assertions exist specifically to keep those guarantees from
 rotting:
@@ -240,8 +240,8 @@ confidence intervals. **2,600 calls**, n=200 per subject,
 | Layered techniques | 200 | `high_risk`×200 | 0.0% | [0.0%, 1.9%] |
 | *Benign bug report (control — **one** issue, 200 times)* | 200 | `safe`×200 | 0.0% | [0.0%, 1.9%] |
 
-**False negatives** — malicious payloads that reached the Reader:
-**10/2395 = 0.4%**, 95% CI [0.2%, 0.8%].
+**False negatives** — malicious payloads a live pipeline would have passed
+to the Reader: **10/2395 = 0.4%**, 95% CI [0.2%, 0.8%].
 
 **False positives** are *not* in this table, and the control row above is why.
 It is one benign issue sampled two hundred times, which measures the model's
@@ -303,8 +303,14 @@ not by thinking harder.
 
 1. **`suspicious` does not short-circuit.** Per
    [PROJECT_SPEC.md](./PROJECT_SPEC.md) §3.1 it passes through to the Reader
-   with a review flag. Those ten samples are ten occasions on which a live
-   attack reached the Reader — in the real pipeline, no simulated bypass.
+   with a review flag. So those ten samples are ten occasions on which the
+   real screening layer returned a verdict that **would not have stopped a
+   live attack** — no simulated bypass, unlike the matrix above, where the
+   flag is set deliberately. *Would have*, not *did*: this sampler calls the
+   audit alone, so no Reader ran in any of the 2,395 calls, which is why
+   [`ibr/variance.py`](ibr/variance.py) names the field `passed_through`. An
+   earlier version of this line said those attacks "reached the Reader",
+   describing a pipeline run that never happened.
 2. **The audit disagreed with itself on byte-identical input**, on three
    separate payloads. It wasn't tricked and it isn't broken — it's a model
    judging text, and a model judging text returns a distribution rather than a

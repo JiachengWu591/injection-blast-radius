@@ -11,6 +11,7 @@ Or under pytest if you have it:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -32,7 +33,12 @@ from ibr.config import (  # noqa: E402
     SANDBOX_ROOT,
     assert_api_key_present,
 )
-from ibr.issues import MalformedIssue, available_issues, load_issue  # noqa: E402
+from ibr.issues import (  # noqa: E402
+    Issue,
+    MalformedIssue,
+    available_issues,
+    load_issue,
+)
 from ibr.sandbox_fs import SandboxViolation  # noqa: E402
 
 ensure_sandbox()
@@ -323,6 +329,93 @@ def test_malformed_input_fails_closed() -> None:
         pass
     else:
         raise AssertionError("a missing fixture was accepted")
+
+
+def test_the_issue_id_is_constrained_because_it_reaches_published_output() -> None:
+    """The one issue field that is not merely logged.
+
+    `title` and `body` never leave the log, and the Reader's summary of them
+    never reaches a published action. `issue_id` does: `SandboxActionSink`
+    writes it into the comment header and into every label line, and the output
+    audit runs on the comment *body* before that — so before this rule, the id
+    was text from outside reaching a published file with nothing between. On
+    the label path there is no output audit at all.
+
+    Enforced on the frozen dataclass rather than in `parse_issue`, because a
+    source is anything that returns an `Issue`: ARCHITECTURE.md invites a
+    webhook source that constructs one directly and never sees the parser. A
+    rule that only one of three construction paths applies is not structural.
+    """
+    for good in (
+        "benign",
+        "malicious",
+        "4821",
+        "b-1",
+        "real-pandas-68009",
+        "arm-label_bug",
+        "a" * 64,
+        # Allowed on purpose, and worth stating: this shape is indistinguishable
+        # from a legitimate id. `real-pandas-68009` and `sk-live-0000` are the
+        # same pattern, so a rule that rejected the second would reject real
+        # data. What the rule closes is structural — see below. It does not and
+        # cannot decide whether a legal id looks sensitive.
+        "sk-live-0000",
+    ):
+        Issue(issue_id=good, title="t", author="a", body="b")
+
+    hostile = {
+        "": "empty, so the header reads `comment on issue #`",
+        "a" * 65: "unbounded length",
+        "../../etc/passwd": "path traversal in a filename-shaped field",
+        "1 (public) -----\nFAKE_API_KEY=fake-sk-0": "forges the sink's framing",
+        "x\nissue #y: bug": "injects a second label line",
+        "id: bug\n": "closes the label line and opens another",
+        "<script>alert(1)</script>": "markup, wherever this gets rendered",
+        "a‮b": "a bidi override, which reorders what a reader sees",
+        "a\x00b": "a null byte",
+        "a b": "whitespace, which the sink's own framing uses as a separator",
+    }
+    for bad, why in hostile.items():
+        try:
+            Issue(issue_id=bad, title="t", author="a", body="b")
+        except MalformedIssue:
+            continue
+        raise AssertionError(
+            f"issue_id {bad!r} was accepted ({why}). It would be interpolated "
+            "into sandbox/public_comments.txt and sandbox/labels.txt verbatim."
+        )
+
+
+def test_no_shipped_issue_id_needed_the_rule_relaxed() -> None:
+    """The constraint above has to hold on the data already in the repository.
+
+    A validation rule nobody can satisfy gets deleted the first time it fires
+    on real data. Both corpora and every fixture are checked here so that
+    tightening the pattern later shows up as this test failing rather than as
+    a corpus that silently stops loading.
+    """
+    checked = 0
+    for name in available_issues():
+        load_issue(name)
+        checked += 1
+    assert checked >= 2, f"only {checked} fixtures found"
+
+    for relative in ("corpus/benign.jsonl", "corpus/real.jsonl"):
+        path = SANDBOX_ROOT / relative
+        if not path.is_file():
+            continue  # real.jsonl is gitignored; absent in CI
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            Issue(
+                issue_id=record["issue_id"],
+                title=record["title"],
+                author=record["author"],
+                body=record["body"],
+            )
+            checked += 1
+    print(f"      ({checked} shipped ids satisfy the rule)")
 
 
 # --- credential hygiene ---------------------------------------------------

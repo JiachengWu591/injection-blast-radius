@@ -57,13 +57,28 @@ LIVE_SUITES = (
     ("tests/test_variance.py", ()),
 )
 
-# The modules the structural claim rests on. `sinks` is here because the
-# executor's writes now go through it: an untested branch in a sink is an
-# untested branch on the publication path, which is exactly what this gate is
-# for. `sources` is not — it decides what gets *read*, and a source cannot
-# widen the set of actions.
+# Every module on the path from a parsed action to a published side effect.
+# That is the criterion, stated as a test a reader can apply to the next
+# module: `sinks` is here because the executor's writes go through it and an
+# untested branch in a sink is an untested branch on the publication path;
+# `output_audit` is here because it runs inside `_publish`, before the sink,
+# and is the last check before anything becomes public; `sources` is not,
+# because it decides what gets *read*, and a source cannot widen the set of
+# actions.
+#
+# `output_audit` was missing for several commits. Nothing leaked as a result —
+# the isolated executor publishes only static templates, so that layer has
+# nothing to catch today and its own docstring says so — but it is the last
+# check before publication, and a ratchet on a defence-in-depth layer costs
+# nothing while the layer is inert and everything once it is not.
+#
+# Kept in one place and asserted against the CI workflow's copy by
+# `tests/test_onboarding.py`. Two hand-maintained lists of security-critical
+# modules would drift, and the one that drifted would be CI's — the copy that
+# actually blocks a merge.
 COVERAGE_GATED = (
-    "ibr/schemas.py,ibr/executor.py,ibr/sandbox_fs.py,ibr/config.py,ibr/sinks.py"
+    "ibr/schemas.py,ibr/executor.py,ibr/sandbox_fs.py,ibr/config.py,"
+    "ibr/sinks.py,ibr/output_audit.py"
 )
 
 

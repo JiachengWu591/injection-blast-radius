@@ -110,6 +110,57 @@ def test_the_keyless_tasks_do_not_call_the_api() -> None:
                 )
 
 
+def test_the_coverage_gate_is_the_same_list_in_ci_and_locally() -> None:
+    """One list of security-critical modules, in two files that must agree.
+
+    `verify.py` and the CI workflow each hard-code the `--include=` list for
+    the 100%-coverage gate, and nothing connected them. Adding a module to one
+    is a fix that looks complete and is not: CI's copy is the one that blocks a
+    merge, so a module added only locally is a module still ungated where it
+    counts. `ibr/output_audit.py` was missing from both for several commits.
+    """
+    import re
+
+    verify = (ROOT / "verify.py").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(
+        encoding="utf-8"
+    )
+
+    # verify.py's constant, with the implicit string concatenation joined.
+    block = verify.split("COVERAGE_GATED = (", 1)[1].split(")", 1)[0]
+    local = set(re.findall(r"ibr/[\w.]+\.py", block))
+
+    gated_lines = [
+        line for line in workflow.splitlines()
+        if "--include=" in line and "--fail-under" not in line
+    ]
+    ci_gate = [line for line in gated_lines if "ibr/schemas.py" in line]
+    assert len(ci_gate) == 1, (
+        "could not find exactly one --include= line naming ibr/schemas.py in "
+        f"the workflow; found {len(ci_gate)}. This gate reads the workflow as "
+        "text, so a reformat can hide the list from it — fix the parse rather "
+        "than deleting the assertion."
+    )
+    remote = set(re.findall(r"ibr/[\w.]+\.py", ci_gate[0]))
+
+    assert local == remote, (
+        "verify.py and .github/workflows/tests.yml gate coverage on different "
+        f"module sets.\n  only in verify.py: {sorted(local - remote)}\n"
+        f"  only in CI:        {sorted(remote - local)}\n"
+        "CI's copy is the one that blocks a merge."
+    )
+    assert "ibr/output_audit.py" in local, (
+        "the output audit is off the coverage gate. It runs inside _publish, "
+        "before the sink, and is the last check before anything becomes "
+        "public — the same criterion that put ibr/sinks.py on the list."
+    )
+    assert "ibr/sources.py" not in local, (
+        "ibr/sources.py is on the gate. It was deliberately excluded: a source "
+        "decides what gets read and cannot widen the set of reachable actions, "
+        "so including it dilutes what the gate means."
+    )
+
+
 def test_the_replay_report_never_claims_a_live_run() -> None:
     """The honesty gate on the keyless demo.
 

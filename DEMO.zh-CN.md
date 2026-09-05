@@ -67,7 +67,7 @@ python phase3_trace.py --run all
 
 这才是真正的主张：**一个被完全攻陷的 Reader 能做的选择是四个预定义动作之一，而这个集合不会因为攻击者变聪明而变大。**
 
-说的时候指着代码 —— [`ibr/executor.py:119`](ibr/executor.py#L119) 是那个 `match`，[`ibr/pipeline.py:385`](ibr/pipeline.py#L385) 是跨越点。
+说的时候指着代码 —— [`ibr/executor.py:128`](ibr/executor.py#L128) 是那个 `match`，[`ibr/pipeline.py:385`](ibr/pipeline.py#L385) 是跨越点。
 
 如果你想要这个主张最强的版本，在完全不联网的情况下跑：
 
