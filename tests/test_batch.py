@@ -437,6 +437,98 @@ def test_already_done_issues_are_skipped_not_rerun() -> None:
     assert report.failed == [], "the issue that did run should have succeeded"
 
 
+def test_the_concurrent_branch_runs_at_all() -> None:
+    """`concurrency=8` is the default, and no test had ever executed it.
+
+    Every call site in this file passed `concurrency=1`, so `run_batch` had two
+    independent execution branches and the tested one was the branch nobody
+    uses: `DEFAULT_CONCURRENCY` is 8, `batch_dry_run.py` takes that default,
+    and ARCHITECTURE.md calls this "the production runner". The `else` arm — a
+    ThreadPoolExecutor, and the ledger underneath it, which has no lock —
+    was reached by nothing.
+
+    Reachable offline, which is why the omission is worth fixing rather than
+    excusing: the fakes below need no API and no cassette, so CI's
+    "the offline suite cannot reach the API-calling paths" does not apply here.
+
+    What this can and cannot show. It exercises the branch, so the ordering
+    contract and the progress callback are now pinned and a crash in that arm
+    would fail a test. It does not prove the ledger is race-free: three threads
+    over distinct keys is not a stress test, and the unlocked append remains a
+    hazard for an adopter who wraps a real sink. That belongs in the
+    documentation, not in an assertion that would pass by luck.
+    """
+
+    class Exploding:
+        """No API, no cassette. Every issue fails identically and in order."""
+
+        @property
+        def chat(self) -> Any:
+            raise RuntimeError("connection reset by peer")
+
+    issues = [(_issue(f"c-{n}"), "plain") for n in range(1, 8)]
+    seen: list[tuple[int, int]] = []
+    report = run_batch(
+        issues,
+        sink=DryRunSink(),
+        client=cast("Any", Exploding()),
+        concurrency=3,
+        progress=lambda done, total: seen.append((done, total)),
+    )
+
+    assert len(report.outcomes) == len(issues), (
+        f"{len(report.outcomes)} outcomes for {len(issues)} issues — the "
+        "concurrent branch dropped or duplicated work"
+    )
+    assert [o.issue_id for o in report.outcomes] == [i.issue_id for i, _ in issues], (
+        "the concurrent branch returned outcomes out of order. `pool.map` "
+        "preserves input order and the report is read positionally, so this "
+        "would misattribute every row to the wrong issue."
+    )
+    assert len(report.failed) == len(issues), "every issue was meant to fail"
+    assert seen == [(n, len(issues)) for n in range(1, len(issues) + 1)], (
+        f"progress was reported as {seen}; it must count 1..n against a fixed "
+        "total, or a long run's progress line is meaningless"
+    )
+    for outcome in report.outcomes:
+        assert outcome.status == "failed"
+        assert outcome.action == "no_action", (
+            "a failure produced an action. §1.4: an error is not a decision."
+        )
+        assert outcome.error and "connection reset" in outcome.error
+
+
+def test_the_concurrent_and_serial_branches_agree() -> None:
+    """Two code paths, one contract. The difference must be wall time only.
+
+    Without this, a change to one branch can silently give the two different
+    semantics — and the default is the one no other test runs.
+    """
+
+    class Exploding:
+        @property
+        def chat(self) -> Any:
+            raise RuntimeError("connection reset by peer")
+
+    issues = [(_issue(f"d-{n}"), "plain") for n in range(1, 6)]
+
+    def fields(concurrency: int) -> list[tuple[str, str, str]]:
+        report = run_batch(
+            issues,
+            sink=DryRunSink(),
+            client=cast("Any", Exploding()),
+            concurrency=concurrency,
+        )
+        return [
+            (o.issue_id, o.status, o.action) for o in report.outcomes
+        ]
+
+    assert fields(1) == fields(4), (
+        "the serial and concurrent branches disagree about what happened to "
+        "the same issues"
+    )
+
+
 def test_the_report_separates_blocked_from_acted_from_failed() -> None:
     outcomes = [
         IssueOutcome(

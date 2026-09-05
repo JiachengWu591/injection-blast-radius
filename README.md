@@ -59,7 +59,7 @@ decision.
 
 Indirect prompt injection isn't a bug you can patch — it's a structural consequence of how LLMs work: instructions and data arrive as the same stream of tokens, so the model has no built-in way to tell them apart. In 2026, this stopped being theoretical: the same injection pattern was shown to compromise multiple production coding agents through nothing more than hidden instructions in a GitHub issue or PR comment.
 
-Published prompt-level defenses don't hold up well against adaptive attackers — bypass rates well above 90% have been reported against them. That's expected, not a failure: a defense built from the same material as the thing it's defending against will eventually be beaten by a good enough attack.
+Published prompt-level defenses don't hold up well against adaptive attackers — bypass rates well above 90% have been reported against them. That figure is **secondhand and uncited**, which is worth flagging in a document where every other number carries an interval and a script that reproduces it: it comes from the general literature, not from this repository, and **this project has never run an adaptive attack against its own audit** (see [Honest limitations](#honest-limitations)). Read it as the reason the architecture is shaped this way, not as evidence. The reasoning does not depend on the magnitude: a defense built from the same material as the thing it's defending against will eventually be beaten by a good enough attack.
 
 ## What this demonstrates
 
@@ -132,7 +132,9 @@ The defense is layered from **two different materials**, not one stacked three t
 - **Probabilistic layers** (an audit agent screening intent, a scan for secret patterns before anything leaves the system) — cheap, fast, and enough to stop most unsophisticated attacks. Like any AI-based filter, they can in principle be fooled.
 - **A structural layer in the middle** — the agent that reads untrusted content can only emit a schema-constrained, enum-limited decision; the agent that acts never reads raw text, only that enum. Even a fully successful injection against the audit and reasoning steps can't produce an action outside a small, predefined whitelist.
 
-Full design rationale, data contracts, and the fail-closed rules this project follows: [PROJECT_SPEC.md](./PROJECT_SPEC.md).
+How the package is layered, what each data contract holds, and where the boundary is: [ARCHITECTURE.md](./ARCHITECTURE.md) — two UML diagrams checked against `dataclasses.fields()`, so they cannot drift from the code. The fail-closed rules are readable as assertions in [`tests/test_failure_paths.py`](tests/test_failure_paths.py), each one carrying the reason its response had to be constructed rather than recorded.
+
+[PROJECT_SPEC.md](./PROJECT_SPEC.md) is the owner's implementation spec and governance record — the phase acceptance criteria, the hard safety rails, and the recorded exception that authorises fetching real issue text. **It is written in Chinese**, which is worth saying before you click: it is the source of truth for what this project is allowed to do, and an English reader who needs it will want a translator open.
 
 How the package is layered, and the three seams to change when pointing this at real data: [ARCHITECTURE.md](./ARCHITECTURE.md).
 
@@ -641,6 +643,20 @@ both together tells you which.
   satisfy them. What survives is narrower and still real: the bound is 1.1%,
   one of the 1,080 real calls did come back `high_risk`, and all four
   repositories are developer-facing open source on GitHub.
+- **The real corpus survived a filter that is not uniform, and that bias is
+  measured rather than solved.** De-identification dropped 22 of 382 reviewed
+  issues (5.8%), but not evenly: 15.9% of `langchain` against 1.1% of
+  `pandas`, a difference of [+7.3%, +22.9%] that excludes zero. Most of that
+  gap is vendor spam rather than privacy — 13 of `langchain`'s 17 drops — and
+  separating the two bounds the part that is actually a privacy filter at
+  5/382 [0.6%, 3.0%] low and 11/382 [1.6%, 5.1%] high. On the low bound the
+  `langchain`–`pandas` difference includes zero; on the high bound it does
+  not. Which you believe depends on how a drop with several causes is
+  attributed, and 382 issues cannot settle that. So the surviving `langchain`
+  sample is still tilted toward whichever of its issues most resemble an
+  ordinary bug report, and the right response remains publishing the rates
+  rather than loosening a review [§6.1](./PROJECT_SPEC.md) does not permit
+  loosening. [Detail](#the-filter-that-makes-this-corpus-less-representative-than-it-looks).
 - **The probabilistic layers are genuinely weak, and the project says so.** The
   bait secret is a run of zeros, so entropy scanning misses it entirely — the
   regex catches it. Two weak checks with different weaknesses, and neither is

@@ -467,6 +467,16 @@ integrate.**
   Wrapping is the adopter's decision, and `run_batch` also needs
   `already_done=` to skip what a previous run finished, so neither `batch` nor
   the pipeline is idempotent on its own.
+
+  One thing to know before wrapping a real sink: `run_batch` defaults to eight
+  threads, and the ledger's append is not locked. Against `sandbox/` that is
+  fine — appends are line-sized and the failure mode is a torn line the reader
+  now refuses rather than guesses at. Against a real destination it is not
+  something to assume: a ledger that two threads race on is a ledger that can
+  lose a `done`, and losing a `done` is the case that costs you a duplicate
+  post. Either serialise the writes or give each worker its own shard. Nothing
+  here does that for you, and no test in this repository would catch it —
+  three threads over distinct keys is not a stress test.
 - **No backpressure or rate limiting.** The sampling harness runs 16 concurrent
   calls because that is fine against one provider and one key; it is not a
   pattern to copy.

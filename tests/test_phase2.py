@@ -134,6 +134,71 @@ def test_executor_source_never_reads_the_free_text_fields() -> None:
     )
 
 
+def test_pipeline_only_ever_puts_the_free_text_into_a_log_record() -> None:
+    """The other half of the AST gate, on the module that actually reads them.
+
+    The gate above inspects `ibr/executor.py` — which never touches
+    `reasoning` or `summary` at all, so it is guarding a file with nothing to
+    guard. `ibr/pipeline.py` is where both fields are read, at three sites
+    below the boundary marker, and nothing constrained it. That is the module
+    where a future "log the summary, and while we're here pass it along"
+    change would actually land.
+
+    So the rule is about the destination rather than the read: every access to
+    `reader_output.reasoning` or `.summary` must be lexically inside a
+    `StageRecord(...)` construction. A log record is a sink for humans; the
+    Executor is a sink for actions. Only the enums may cross into the second.
+
+    Checked by AST rather than by grep because `README.md`'s claim is
+    structural, and because the interesting failure is a read that looks
+    identical to the existing ones and goes somewhere else.
+    """
+    import ast
+
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "ibr" / "pipeline.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    free_text = {"reasoning", "summary"}
+
+    # Every node lexically inside a StageRecord(...) call.
+    inside_log: set[int] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "StageRecord"
+        ):
+            for child in ast.walk(node):
+                inside_log.add(id(child))
+
+    escaped: list[tuple[str, int]] = []
+    found = 0
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr in free_text
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "reader_output"
+        ):
+            found += 1
+            if id(node) not in inside_log:
+                escaped.append((node.attr, node.lineno))
+
+    assert found, (
+        "pipeline.py no longer reads reader_output.reasoning or .summary at "
+        "all. Either the boundary record stopped saying what it held back — "
+        "which is the evidence the trace shows a reader — or this gate is "
+        "watching a module that moved."
+    )
+    assert not escaped, (
+        "pipeline.py reads the Reader's free text outside a StageRecord: "
+        f"{escaped}. Below the boundary those two fields may reach the log and "
+        "nothing else — README.md's crossing-point row is exactly this claim, "
+        "and until now only a line-number citation stood behind it."
+    )
+
+
 def test_actions_outside_the_whitelist_become_no_action() -> None:
     reset_public_comments()
     reset_labels()

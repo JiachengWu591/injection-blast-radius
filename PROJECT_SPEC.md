@@ -242,7 +242,7 @@ match reader_output.suggested_action:
 
 ## 8. 完成标志
 
-- [x] Phase 0–4 全部通过各自验收标准（含自动化断言脚本）——共 72 条，`tests/test_phase0..4.py`（其中 14 条是需要 key 的 live 断言。写下 52 那天确实是 52，之后加测试没人改这个数——现在由 `test_a_documented_assertion_count_matches_the_file` 守着）
+- [x] Phase 0–4 全部通过各自验收标准（含自动化断言脚本）——共 76 条，`tests/test_phase0..4.py`（其中 14 条是需要 key 的 live 断言。写下 52 那天确实是 52，之后加测试没人改这个数——现在由 `test_a_documented_assertion_count_matches_the_file` 守着）
 - [x] 安全审计 Agent 和 Reader Agent 的输出都包含 `reasoning` 字段，且能在日志里确认这个字段先于结论生成——由原始 JSON 的字符偏移量判定（`ibr/observability.py` `reasoning_precedes`），`phase3_trace.py` 里显示为 `[reasoning written before verdict ✓]`
 - [x] 任意环节出错/超时/格式不合法时，行为是拒绝/不执行，而不是放行——实测验证过：DeepSeek thinking mode 拒绝 `tool_choice` 时整条流水线判 high_risk / no_action
 - [x] README 里能看到"未防御 vs 隔离防御"的效果对比——README 开头即为真实运行输出与泄露字节

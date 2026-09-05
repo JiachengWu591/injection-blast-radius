@@ -67,6 +67,136 @@ def test_reasoning_precedes_reads_generation_order_not_dict_order() -> None:
     assert reasoning_precedes('{"reasoning": "x"}', "risk_level") is None
 
 
+def test_the_trace_renderer_shows_all_three_checks_and_the_ordering_marker() -> None:
+    """Phase 3's second deliverable, which had no assertion of any kind.
+
+    §4 Phase 3's acceptance is that a reader can see "what the content went
+    through in the security audit, the structured boundary and the output
+    audit", and that `reasoning` demonstrably came first.
+    `reasoning_precedes` is asserted twice elsewhere, but the *rendering* — the
+    thing a reader actually looks at — was accepted by a human glance, and
+    `phase3_trace.py` was outside coverage entirely.
+
+    Driven from constructed records rather than a run, so it needs no key and
+    no cassette: the question here is whether the renderer shows what is in
+    the log, not whether the pipeline produces it (which
+    `tests/test_failure_paths.py` now covers end to end).
+    """
+    import io
+    from contextlib import redirect_stdout
+
+    import phase3_trace
+
+    clear_log()
+    append_records(
+        [
+            LogRecord(
+                ts=utc_now(),
+                run_id="trace-test",
+                architecture="isolated",
+                issue_id="malicious",
+                stage="security_audit",
+                outcome="high_risk",
+                duration_ms=812.0,
+                input_summary="issue body, 900 chars",
+                output_summary="risk_level=high_risk",
+                risk_level="high_risk",
+                reasoning_first=True,
+            ),
+            LogRecord(
+                ts=utc_now(),
+                run_id="trace-test",
+                architecture="isolated",
+                issue_id="malicious",
+                stage="structured_boundary",
+                outcome="crossed",
+                duration_ms=0.0,
+                input_summary="free text held back: reasoning='...'",
+                output_summary="issue_type=bug suggested_action=reply_comment",
+                detail="only issue_type + suggested_action cross",
+            ),
+            LogRecord(
+                ts=utc_now(),
+                run_id="trace-test",
+                architecture="isolated",
+                issue_id="malicious",
+                stage="output_audit",
+                outcome="clean",
+                duration_ms=1.0,
+                input_summary="the rendered template",
+                output_summary="no secret patterns matched",
+            ),
+        ]
+    )
+
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        code = phase3_trace.render()
+    rendered = buffer.getvalue()
+
+    assert code == 0, "the renderer reported failure on a well-formed log"
+
+    # All three checks §4 names, by their human-readable labels.
+    for stage in ("security_audit", "structured_boundary", "output_audit"):
+        label = phase3_trace._label(stage)
+        assert label in rendered, (
+            f"the trace does not show the {stage} stage, so PROJECT_SPEC.md §4 "
+            "Phase 3's 'what happened in each of the three checks' is not "
+            f"visible. Looked for {label!r}."
+        )
+
+    # The ordering claim, which is the half of §8's checkbox that was
+    # asserted only at the semantic level and never in what a reader sees.
+    assert "[reasoning written before verdict ✓]" in rendered, (
+        "the ordering marker is missing from the rendered trace, which is the "
+        "artefact PROJECT_SPEC.md §8 cites as the proof of it"
+    )
+    assert "VERDICT WRITTEN BEFORE REASONING" not in rendered
+
+    # And the risk_level §4 names by field, on screen rather than only on disk.
+    assert "risk_level=high_risk" in rendered
+    assert "trace-test" in rendered, "the run id is not shown, so two runs merge"
+
+
+def test_the_trace_renderer_refuses_an_empty_log_rather_than_printing_nothing() -> None:
+    """A blank trace and a working trace must not look the same.
+
+    `render` returning 0 on no records would make `phase3_trace.py` exit
+    successfully having shown a reader nothing at all.
+    """
+    import io
+    from contextlib import redirect_stdout
+
+    import phase3_trace
+
+    clear_log()
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        code = phase3_trace.render()
+
+    assert code == 1, "an empty log rendered as success"
+    assert "No log records yet" in buffer.getvalue()
+
+
+def test_the_trace_renderer_never_claims_an_ordering_it_cannot_see() -> None:
+    """`reasoning_first=None` must render as neither a tick nor an alarm.
+
+    The renderer's third arm. "Unknown" printed as ✓ would be the project
+    claiming its central observability property on a record that does not
+    support it.
+    """
+    marker = __import__("phase3_trace")._reasoning_marker
+    assert marker({"reasoning_first": True}) == "  [reasoning written before verdict ✓]"
+    assert "VERDICT WRITTEN BEFORE REASONING" in marker({"reasoning_first": False})
+    for unknown in ({}, {"reasoning_first": None}):
+        assert "✓" not in marker(unknown), (
+            f"{unknown} rendered as a confirmed ordering"
+        )
+        assert "VERDICT WRITTEN" not in marker(unknown), (
+            f"{unknown} rendered as a violation"
+        )
+
+
 def test_scrub_removes_the_api_key() -> None:
     saved = os.environ.get(API_KEY_ENV_VAR)
     try:

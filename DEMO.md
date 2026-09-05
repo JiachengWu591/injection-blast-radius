@@ -6,9 +6,27 @@ Four scenes, roughly ten minutes. Each one is a command you actually run, plus
 the point it exists to make. PROJECT_SPEC.md §5 is the source for this
 structure.
 
-Before starting: `cp .env.example .env`, paste a DeepSeek key, and run
-`python phase0_smoke.py` once to confirm the sandbox and the API are both
-working. Do that *before* the audience is watching.
+**With a key**, which is what the four scenes below assume:
+`cp .env.example .env`, paste a DeepSeek key, and run `python phase0_smoke.py`
+once to confirm the sandbox and the API are both working. Do that *before* the
+audience is watching.
+
+**Without one**, there is a shorter talk that gives up less than you would
+expect:
+
+```bash
+mise run demo                           # all six scenarios, from cassettes
+mise run trace                          # the per-stage trace of that run
+python phase2_isolated.py --scene 4     # the structural claim, in <1s
+python tests/test_phase2.py --offline   # the assertions behind it
+```
+
+That covers Scene 1, Scene 2 and the strongest part of Scene 4. What it cannot
+give you is Scene 3: the miss rates and the variance table come from thousands
+of live calls, and replaying a recording of one of them shows a sample of a
+probabilistic layer rather than the layer's behaviour. Say that out loud rather
+than presenting the recorded numbers as the measurement — the replay banner
+says it too, but the audience is watching you, not the banner.
 
 A note you should say out loud early: every "secret" here is the fixed
 placeholder `fake-sk-00000000000000000000`, the "GitHub issue" is a local JSON

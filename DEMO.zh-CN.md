@@ -4,7 +4,18 @@
 
 四幕，大约十分钟。每一幕都是一条你真的会跑的命令，加上它存在的理由。这个结构来自 PROJECT_SPEC.md 第 5 节。
 
-开始之前：`cp .env.example .env`，粘贴 DeepSeek key，跑一次 `python phase0_smoke.py` 确认沙箱和 API 都正常。**在观众看之前做完这一步。**
+**有 key 的情况**，也就是下面四幕假定的情况：`cp .env.example .env`，粘贴 DeepSeek key，跑一次 `python phase0_smoke.py` 确认沙箱和 API 都正常。**在观众看之前做完这一步。**
+
+**没有 key 的情况**，有一个更短的讲法，而且放弃的东西比你想的少：
+
+```bash
+mise run demo                           # 六个场景全跑，来自录制
+mise run trace                          # 那次运行的逐阶段 trace
+python phase2_isolated.py --scene 4     # 结构性主张，1 秒内
+python tests/test_phase2.py --offline   # 它背后的那些断言
+```
+
+这覆盖了第一幕、第二幕，以及第四幕最强的那部分。**给不了的是第三幕**：漏放率和方差表来自数千次真实调用，而回放一次录制给你看的是**某个概率层的一个样本**，不是那一层的行为。请把这句话**说出来**，而不是把录制里的数字当成测量结果——回放的横幅也写着这件事，但观众看的是你，不是横幅。
 
 有一句话应该早点说出来：这里每一个"密钥"都是固定的占位符 `fake-sk-00000000000000000000`，"GitHub issue" 是一个本地 JSON 文件，"公开评论"是 `sandbox/` 里的一个文本文件。**没有任何真实的东西参与，除了模型 API 之外不接触网络。**
 
