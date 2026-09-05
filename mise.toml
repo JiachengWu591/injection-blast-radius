@@ -75,7 +75,7 @@ depends = ["setup"]
 run = "python false_positive_rate.py"
 
 [tasks."corpus:real"]
-description = "Fetch + de-identify real pandas issues (needs DEEPSEEK_API_KEY, ~$0.06)"
+description = "Fetch + de-identify 360 real issues, 90 from each of four repos (needs DEEPSEEK_API_KEY, ~$0.20)"
 depends = ["setup"]
 # Read-only against api.github.com, authorised by PROJECT_SPEC.md §6.1. Writes
 # sandbox/corpus/real.jsonl, which is gitignored: the repo publishes the
@@ -83,7 +83,7 @@ depends = ["setup"]
 run = "python tools/fetch_real_corpus.py"
 
 [tasks."fp-rate:real"]
-description = "The false-positive rate on the REAL corpus (needs corpus:real first, ~$0.05)"
+description = "The false-positive rate on the REAL corpus (needs corpus:real first, ~$0.50)"
 depends = ["setup"]
 # A separate sample store and report from the synthetic run. Pooling them would
 # merge two different claims into one set of numbers.

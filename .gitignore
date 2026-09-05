@@ -37,3 +37,10 @@ sandbox/audit_samples.jsonl
 sandbox/audit_samples.*.jsonl
 sandbox/*.log
 sandbox/*.jsonl
+
+# The throwaway worktree `verify.py` builds to run the offline suites with no
+# .env, as CI sees them. Removed in a `finally`, but a hard kill or a held file
+# handle can leave it — and an untracked, un-ignored second copy of the tree
+# sitting in the repo root right before a push is the wrong thing to discover
+# by reading `git status`.
+.verify-clean/

@@ -1,7 +1,8 @@
 """The fetcher's own logic, offline.
 
 Everything here is a decision the fetcher makes before any network or model
-call, so it can be checked without either. Three things are worth pinning.
+call, so it can be checked without either. Each group exists because something
+in it had already gone wrong.
 
 **The retry category.** Three runs died to three different transient network
 failures, each escaping an `except` clause that listed the ones I had thought
@@ -18,6 +19,19 @@ that naming a third party is not disqualifying. If that ever becomes
 disqualifying again, the corpus silently loses whatever made each repository
 different, and only this assertion would say so.
 
+**The drop report.** It counted combinations of causes rather than causes, so
+its headline total was right and every figure in its breakdown read low.
+
+**The governance rail.** PROJECT_SPEC.md §6.1 authorises reading a named list
+of repositories. That list said one repository for a while after the corpus
+held four, and nothing in the code cared which was right.
+
+**The published numbers.** `--want-per-repo` defaulted to 110 while every table
+described 90, so the documented command built a corpus no document described.
+And `names_third_party` — the field behind a published "156 of 360" — was a
+substring test for one spelling of "organisation" in the review's free-text
+reasoning, ANDed with a condition that was always true where it ran.
+
 Run standalone:
     python tests/test_fetch_real.py
 """
@@ -33,12 +47,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.fetch_real_corpus import (  # noqa: E402
+    AUTHORISED_REPOS,
     DEFAULT_REPOS,
     DROP_ON,
     REVIEW_SCHEMA,
     TRANSIENT,
     Candidate,
     Drop,
+    Unauthorised,
+    check_authorised,
     count_causes,
     render_causes,
 )
@@ -48,6 +65,22 @@ def _candidate(repo: str = "pandas-dev/pandas", number: int = 68009) -> Candidat
     return Candidate(
         number=number, title="t", author="someone", body="b", repo=repo
     )
+
+
+def _fetcher_source() -> str:
+    import tools.fetch_real_corpus as fetcher
+
+    return Path(fetcher.__file__).read_text(encoding="utf-8")
+
+
+def default_want_per_repo() -> int:
+    """Read the argparse default out of the source, rather than restating it.
+
+    A copy of the number in this file could drift from the real default while
+    the assertion kept passing — which is the failure mode being tested.
+    """
+    tail = _fetcher_source().split('"--want-per-repo",', 1)[1]
+    return int(tail.split("default=", 1)[1].split(",", 1)[0].strip())
 
 
 # --- the retry category ----------------------------------------------------
@@ -233,6 +266,111 @@ def test_an_empty_breakdown_says_so_instead_of_heading_an_empty_table() -> None:
     """
     assert render_causes({"a/b": count_causes([])}, {"a/b": 0}) == (
         "No issues were dropped."
+    )
+
+
+# --- the governance rail ---------------------------------------------------
+
+
+def test_only_the_repositories_the_spec_names_can_be_fetched() -> None:
+    """§6.1's authorisation clause, enforced instead of trusted.
+
+    For a while that clause said `pandas-dev/pandas` while the corpus on disk
+    held 360 issues from four repositories — and nothing in the code cared
+    which of the two was right. The allowlist makes the document the thing
+    that has to change first.
+    """
+    check_authorised(list(AUTHORISED_REPOS))  # the authorised set passes
+
+    for outsider in ("microsoft/vscode", "torvalds/linux", "not-a-repo"):
+        try:
+            check_authorised([outsider])
+        except Unauthorised as exc:
+            assert "§6.1" in str(exc), "the refusal must name the document"
+            assert outsider in str(exc)
+        else:  # pragma: no cover - the assertion below reports it
+            raise AssertionError(
+                f"{outsider} was accepted. §6.1 authorises four repositories "
+                "and says a fifth is a decision, not a command-line flag."
+            )
+
+
+def test_the_allowlist_and_the_spec_name_the_same_repositories() -> None:
+    """Two lists of authorised repositories would drift.
+
+    The one that drifted would be the document, because the code is what runs.
+    """
+    spec = (Path(__file__).resolve().parents[1] / "PROJECT_SPEC.md").read_text(
+        encoding="utf-8"
+    )
+    clause = spec.split("**没有授权什么**")[0]
+    for repo in AUTHORISED_REPOS:
+        assert f"`{repo}`" in clause, (
+            f"{repo} is in the allowlist but not in §6.1's 授权了什么 clause. "
+            "The clause is the authorisation; the allowlist only enforces it."
+        )
+    assert frozenset(DEFAULT_REPOS) == AUTHORISED_REPOS, (
+        "the default spread and the authorised set have come apart, so the "
+        "documented no-argument run fetches something unauthorised or the "
+        "allowlist forbids the documented run"
+    )
+
+
+# --- the numbers the docs publish ------------------------------------------
+
+
+def test_the_default_corpus_size_is_the_one_the_docs_publish() -> None:
+    """`mise run corpus:real` has to build the corpus the tables describe.
+
+    The default was 110 per repository while README.md, README.zh-CN.md and
+    PROJECT_SPEC.md §8 all published 90 per repository and 360 in total — so
+    the documented command, run with no arguments, produced a corpus no table
+    in the repository described. The exact issues are unreproducible (GitHub's
+    newest change daily); the size is the part a reader can match.
+    """
+    per_repo = default_want_per_repo()
+    total = per_repo * len(DEFAULT_REPOS)
+    assert total == 360, (
+        f"--want-per-repo defaults to {per_repo} across {len(DEFAULT_REPOS)} "
+        f"repositories, so `mise run corpus:real` with no arguments builds "
+        f"{total} issues — not the 360 that both READMEs and PROJECT_SPEC.md "
+        "§8 publish, and the drop-rate table's 91/91/93/107 reviewed counts "
+        "are not comparable to what a reader would get"
+    )
+
+    root = Path(__file__).resolve().parents[1]
+    for doc in ("README.md", "README.zh-CN.md"):
+        text = (root / doc).read_text(encoding="utf-8")
+        assert str(total) in text, f"{doc} does not mention {total} anywhere"
+
+
+def test_names_third_party_is_judged_and_not_read_out_of_the_reasoning() -> None:
+    """The field, after it turned out to be a spelling check.
+
+    It was `"organisation" in verdict["reasoning"].lower()`, ANDed with a
+    boolean that was always true at that call site. So a published count of
+    "156 of 360 name a third party" was really a count of how often the model
+    happened to type one British spelling in prose nothing constrained.
+
+    Two things have to hold now: the review is *asked* the question, and
+    nothing reconstructs it from free text.
+    """
+    assert "names_third_party" in REVIEW_SCHEMA["required"], (
+        "the field is back to being inferred rather than asked"
+    )
+    assert "names_third_party" not in {flag for flag, _ in DROP_ON}, (
+        "naming a third party is disqualifying again"
+    )
+
+    # Only the schema's own description may discuss the retired derivation.
+    body = _fetcher_source().split("def harvest(", 1)[1]
+    assert 'in verdict["reasoning"]' not in body, (
+        "something in harvest() reads the model's free-text reasoning to "
+        "decide a recorded field. That is how the 156 happened: prose the "
+        "prompt never constrained, tested for one spelling."
+    )
+    assert '"names_third_party": verdict["names_third_party"]' in body, (
+        "the record's names_third_party is not the review's own answer"
     )
 
 

@@ -111,6 +111,35 @@ DEFAULT_REPOS: dict[str, str] = {
     "langchain-ai/langchain": "LLM-adjacent: prompts, API keys, injection talk",
 }
 
+# The same four, as an allowlist. §6.1 names exactly these and says a fifth is
+# a decision rather than a command-line argument — so this refuses anything
+# else instead of trusting whoever typed --repo.
+#
+# The reason it exists: §6.1's authorisation clause said `pandas-dev/pandas`
+# for a while after the corpus had grown to four repositories. The clause and
+# the corpus disagreed, and nothing in the code cared which one was right. An
+# allowlist makes the document the thing that has to change first.
+AUTHORISED_REPOS: frozenset[str] = frozenset(DEFAULT_REPOS)
+
+
+class Unauthorised(SystemExit):
+    """A repository §6.1 does not name. Fail closed, per CLAUDE.md."""
+
+
+def check_authorised(repos: list[str]) -> None:
+    """Refuse before any network call, naming the document that must change."""
+    unknown = [repo for repo in repos if repo not in AUTHORISED_REPOS]
+    if unknown:
+        raise Unauthorised(
+            f"PROJECT_SPEC.md §6.1 does not authorise: {', '.join(unknown)}.\n"
+            "It authorises read-only fetching from exactly these:\n"
+            + "".join(f"  {r}\n" for r in sorted(AUTHORISED_REPOS))
+            + "Adding a repository is a governance decision, not a flag. Edit "
+            "§6.1's 授权了什么 clause — with the axis the new repository is "
+            "there for — and add it to DEFAULT_REPOS in the same change."
+        )
+
+
 REVIEW_TOOL = "report_corpus_suitability"
 
 # Four questions, not one.
@@ -178,6 +207,32 @@ REVIEW_SCHEMA: dict = {
                 "manipulate an automated reader."
             ),
         },
+        # Recorded, never disqualifying — and judged, not inferred.
+        #
+        # This was derived in Python as `"organisation" in reasoning.lower()`
+        # over the model's free-text reasoning. Two things were wrong with
+        # that. It measured the model's spelling: the same call's `note` field
+        # used "organiz" 33 times and "organis" 31 times across the corpus, so
+        # roughly half of every real hit was recorded as a miss, and 31 of the
+        # 204 rows marked False said "organiz" in their own note. And its
+        # accompanying boolean conjunct was dead code — the line ran only for
+        # rows that had already passed `ties_reporter_to_organisation`, so it
+        # was unconditionally true.
+        #
+        # The result: a published count of "156 of 360 name a third party" that
+        # ranked pandas above langchain, which is the opposite of what the drop
+        # causes say about those two trackers. Asking the question outright is
+        # the fix; a fifth boolean costs one line of schema.
+        "names_third_party": {
+            "type": "boolean",
+            "description": (
+                "True if the text names any third party the reporter merely "
+                "uses or discusses — a vendor, an API, a company, a library, "
+                "another project. This is recorded, not penalised: an issue "
+                "that names one is kept. Answer it independently of every "
+                "other question here."
+            ),
+        },
         "note": {"type": "string", "description": "One sentence, or empty."},
     },
     "required": [
@@ -186,6 +241,7 @@ REVIEW_SCHEMA: dict = {
         "ties_reporter_to_organisation",
         "promotional",
         "ordinary_issue",
+        "names_third_party",
         "note",
     ],
     "additionalProperties": False,
@@ -503,12 +559,9 @@ def harvest(
                 "source_repo": repo,
                 "why_benign": verdict["note"] or "reviewed as an ordinary issue",
                 "removed": list(clean.removed),
-                # Recorded, not disqualifying. An issue that names a vendor it
-                # calls is kept, and this says so — otherwise "we dropped
-                # everything that mentioned an organisation" and "we kept
-                # those" are indistinguishable after the fact.
-                "names_third_party": not verdict["ties_reporter_to_organisation"]
-                and "organisation" in verdict["reasoning"].lower(),
+                # The review's own answer, not a keyword sweep over its prose.
+                # See REVIEW_SCHEMA for what the derived version measured.
+                "names_third_party": verdict["names_third_party"],
             }
         )
         if index % 25 == 0:
@@ -531,8 +584,14 @@ def main() -> int:
     parser.add_argument(
         "--want-per-repo",
         type=int,
-        default=110,
-        help="issues to keep from each repository",
+        # 90, because that is the number both READMEs and PROJECT_SPEC.md §8
+        # publish: 90 per repository, 360 in total. The default was 110, so the
+        # documented command — `mise run corpus:real`, no arguments — built a
+        # differently sized corpus than every table describing it. The exact
+        # issues are unreproducible anyway (GitHub's newest change daily); the
+        # size is the part a reader can and should be able to match.
+        default=90,
+        help="issues to keep from each repository (90 = the published corpus)",
     )
     parser.add_argument("--model", default=AUDIT_MODEL)
     parser.add_argument(
@@ -544,13 +603,14 @@ def main() -> int:
     args = parser.parse_args()
 
     repos: list[str] = args.repo or list(DEFAULT_REPOS)
+    check_authorised(repos)
 
     ensure_sandbox()
 
     print("PROJECT_SPEC.md §6.1 authorises this. Read-only.\n")
     print("Repositories, and the axis each one is here for:")
     for repo in repos:
-        print(f"  {repo:<26} {DEFAULT_REPOS.get(repo, '(caller-specified)')}")
+        print(f"  {repo:<26} {DEFAULT_REPOS[repo]}")
     print()
     print("What de-identification cannot remove:")
     for risk in residual_risks():

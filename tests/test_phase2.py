@@ -30,7 +30,9 @@ from ibr.output_audit import audit_output, shannon_entropy  # noqa: E402
 from ibr.pipeline import run_isolated  # noqa: E402
 from ibr.schemas import (  # noqa: E402
     AUDIT_SCHEMA,
+    ISSUE_TYPES,
     READER_SCHEMA,
+    SUGGESTED_ACTIONS,
     ReaderOutput,
     SchemaViolation,
     parse_audit_verdict,
@@ -172,6 +174,44 @@ def test_every_reachable_output_is_a_static_template() -> None:
     assert audit_output(published).blocked is False
 
 
+def test_the_action_set_is_the_one_the_documentation_bounds() -> None:
+    """The finite action set is the central claim, and nothing pinned it.
+
+    "One of four predefined actions" appears in both READMEs, both
+    ARCHITECTURE files, PROJECT_SPEC.md §3.2 and §3.4, DEMO.md, a docstring in
+    `ibr/pipeline.py`, and prose that `audit_variance.py` prints into a
+    generated report. Appending a fifth entry to the tuple needed no other
+    edit for any of that to become wrong: the executor's `if action not in
+    SUGGESTED_ACTIONS` admits it and the `match` falls through to `no_action`,
+    so nothing failed. The only thing standing in the way was accidental — a
+    line-number citation elsewhere that shifts when the tuple grows, which
+    reports drift rather than the claim it invalidates.
+
+    README.md invites exactly this change ("A fifth action would shrink it and
+    a sixth would shrink it further"), so it should be a decision that fails
+    loudly and lists what has to move with it.
+    """
+    assert SUGGESTED_ACTIONS == (
+        "reply_comment",
+        "label_bug",
+        "label_question",
+        "no_action",
+    ), (
+        f"the action set is now {SUGGESTED_ACTIONS}. Everything that says "
+        '"four predefined actions" has to move in the same change: README.md '
+        "and README.zh-CN.md (twice each, plus the 'three actions, not four' "
+        "sentence), ARCHITECTURE.md and ARCHITECTURE.zh-CN.md, "
+        "PROJECT_SPEC.md §3.2 and §3.4, DEMO.md, ibr/pipeline.py's docstring, "
+        "audit_variance.py's report prose, and the coverage-gap table built on "
+        "those outcomes. Then add the new arm to "
+        "test_every_arm_of_the_whitelist_is_exercised."
+    )
+    assert ISSUE_TYPES == ("bug", "question", "feature_request", "unclear"), (
+        f"the issue-type enum is now {ISSUE_TYPES}; the reader schema and the "
+        "comment templates are documented as covering exactly these four"
+    )
+
+
 def test_every_arm_of_the_whitelist_is_exercised() -> None:
     """All four enumerated actions, with a poisoned payload behind each.
 
@@ -190,6 +230,15 @@ def test_every_arm_of_the_whitelist_is_exercised() -> None:
         "label_question": ("label_question", ("question",), None),
         "no_action": ("no_action", (), None),
     }
+    # The dict was hardcoded and never compared against the enum, so this test
+    # kept claiming "all four" while a fifth action would have got no offline
+    # test at all — the same coverage hole the docstring says a sweep once
+    # found, one level up.
+    assert set(expected) == set(SUGGESTED_ACTIONS), (
+        f"the whitelist is {sorted(SUGGESTED_ACTIONS)} but this test exercises "
+        f"{sorted(expected)}. Add the arm here in the same change, or the "
+        "enumeration is bounded in the docs and unverified in the tests."
+    )
     for action, (want_taken, want_labels, want_published) in expected.items():
         decision = execute(f"arm-{action}", _poisoned_reader_output(action=action))
         assert decision.action_taken == want_taken, f"{action}: wrong action"

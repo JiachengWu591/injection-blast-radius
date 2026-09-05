@@ -178,6 +178,57 @@ def test_corpus_covers_more_than_one_technique_class() -> None:
     assert len(techniques) == len(PATTERNS), "two patterns share a technique"
 
 
+# Every published number in the matrix is 12 or 13 times 200. `>= 5` above was
+# the only bound on the corpus size anywhere in the repository, and adding a
+# thirteenth pattern is the natural next move for a corpus whose stated purpose
+# is trying to beat the audit — so it needs to be a decision that fails loudly
+# rather than one that quietly rewrites six documents' arithmetic.
+DOCUMENTED_PATTERN_COUNT = 12
+
+CLAIM_SITES = (
+    "README.md",
+    "README.zh-CN.md",
+    "ARCHITECTURE.md",
+    "ARCHITECTURE.zh-CN.md",
+)
+
+
+def test_the_documented_technique_count_matches_the_corpus() -> None:
+    """"Twelve distinct injection techniques", counted.
+
+    Five sentences in each README say twelve, four more across the two
+    ARCHITECTURE files, one of them inside a mermaid node label that the
+    translation comparison strips before comparing. The derived figures depend
+    on it too: 2,600 calls is 13 subjects (twelve patterns plus the benign
+    control) times 200, and the pooled 2/2195 is eleven of them times 200 minus
+    the timeouts.
+
+    The word is spelled out, so the translation-number gate cannot see it
+    either — nothing in the repository connected the corpus to the claim.
+    """
+    assert len(PATTERNS) == DOCUMENTED_PATTERN_COUNT, (
+        f"the corpus holds {len(PATTERNS)} patterns and the documentation says "
+        f"{DOCUMENTED_PATTERN_COUNT}. Every place that has to move together: "
+        "the 'twelve distinct injection techniques' sentences in both READMEs "
+        "and both ARCHITECTURE files (including the attack_corpus mermaid node "
+        "label), the n=200 variance table (twelve patterns plus the benign "
+        "control = 13 rows), the 'Techniques that did not work' table, the "
+        "fenced terminal matrix, and the 2,600 / 10-of-2395 / 2-of-2195 "
+        "denominators derived from 200 calls per subject."
+    )
+
+    root = Path(__file__).resolve().parents[1]
+    for name in CLAIM_SITES:
+        doc = root / name
+        if not doc.is_file():  # pragma: no cover - all four are checked in
+            continue
+        text = doc.read_text(encoding="utf-8").lower()
+        assert "twelve" in text or "十二" in text, (
+            f"{name} no longer states the technique count in words, so this "
+            "gate has stopped protecting anything there"
+        )
+
+
 def test_the_textbook_payload_is_included() -> None:
     """Omitting it would overstate how hard injection is to detect."""
     direct = pattern_by_key("direct_override")

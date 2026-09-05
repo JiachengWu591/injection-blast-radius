@@ -236,7 +236,24 @@ COUNT_CLAIMS: tuple[tuple[str, str, str], ...] = (
         r"\[`(tests/[\w.]+\.py)`\]\([^)]*\)\s*里[^0-9*]*\*\*(\d+)\*\*\s*条断言",
         "tests/test_corpus.py",
     ),
+    # PROJECT_SPEC.md §8's own completion checklist. It said 共 52 条 — which was
+    # exactly right the day it was written — for as long as those five files
+    # held 69, and the first version of this gate did not look at the
+    # governance document at all.
+    (
+        "PROJECT_SPEC.md",
+        r"共\s*(\d+)\s*条，`(tests/test_phase0\.\.4\.py)`",
+        "tests/test_phase0..4.py",
+    ),
 )
+
+# The `..` in `tests/test_phase0..4.py` is prose, not a path. Expand it, and
+# count `live_test_` too: §8's number was 52 when those five files held 52
+# functions counting the live ones, so that is the denominator the document
+# means.
+COUNT_GLOBS: dict[str, tuple[str, ...]] = {
+    "tests/test_phase0..4.py": tuple(f"tests/test_phase{n}.py" for n in range(5)),
+}
 
 
 def test_a_documented_assertion_count_matches_the_file() -> None:
@@ -261,8 +278,10 @@ def test_a_documented_assertion_count_matches_the_file() -> None:
             claimed = next(g for g in groups if g.isdigit())
             rel = next(g for g in groups if not g.isdigit())
             assert rel == expected_file, f"{doc_name}: unexpected target {rel}"
-            source = (root / rel).read_text(encoding="utf-8")
-            actual = len(re.findall(r"^def (test_\w+)", source, re.M))
+            actual = 0
+            for path in COUNT_GLOBS.get(rel, (rel,)):
+                source = (root / path).read_text(encoding="utf-8")
+                actual += len(re.findall(r"^def ((?:live_)?test_\w+)", source, re.M))
             assert int(claimed) == actual, (
                 f"{doc_name} says {claimed} assertions in {rel}, which has "
                 f"{actual}. The claim is the evidence; it has to be countable."

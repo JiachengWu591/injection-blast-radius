@@ -58,7 +58,7 @@ jobs:
         # hiding a bug identical to one already fixed elsewhere for four
         # commits. Suppressions are sometimes correct; adding one silently
         # is not.
-        run: python tests/test_suppressions.py
+        run: coverage run --append --source=ibr tests/test_suppressions.py
 
       - name: Architecture — both diagrams, checked against the code
         # ARCHITECTURE.md draws a layered package diagram and a UML class
@@ -184,7 +184,7 @@ jobs:
         # The load-bearing assertion is that residual_risks() stays non-empty.
         # The moment that module reads as complete, §6.1's authorisation is
         # being relied on for more than it grants.
-        run: python tests/test_deidentify.py
+        run: coverage run --append --source=ibr tests/test_deidentify.py
 
       - name: Real-corpus fetcher — retry category, id namespace, drop policy
         # Everything the fetcher decides before it touches the network or a
@@ -197,7 +197,7 @@ jobs:
         # "identifies someone" boolean was dropping genuine bug reports for
         # naming an API they called, and merging the questions again would
         # quietly remove whatever makes each repository different.
-        run: python tests/test_fetch_real.py
+        run: coverage run --append --source=ibr tests/test_fetch_real.py
 
       - name: Require full coverage of the security-critical modules
         # These are the structural boundary: the schema parsers, the executor

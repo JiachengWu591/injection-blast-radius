@@ -530,6 +530,103 @@ def test_every_real_record_carries_its_audit_trail() -> None:
         parse_issue(json.dumps(record), origin=f"real.jsonl:{record['issue_id']}")
 
 
+def test_the_real_corpus_has_the_shape_the_docs_describe() -> None:
+    """Nothing tied real.jsonl to any number published about it.
+
+    The synthetic side is pinned — `/{total}` has to appear in both READMEs, so
+    a resized corpus fails. The real side had four gates on *content* (no
+    handles, no credentials, namespaced ids, an audit trail) and none on
+    *shape*, while five rows of a false-positive table, a [0.0%, 1.1%] interval
+    and a per-repository breakdown all rest on 360 issues, 90 from each of four
+    repositories. Those are hand-typed after a paid fetch.
+
+    Skipped where the corpus is absent, which is CI and any fresh clone — the
+    machine that has it is the machine where the docs get edited.
+    """
+    records = _real_records()
+    if records is None:
+        print("      (skipped: no real corpus)")
+        return
+
+    per_stratum: dict[str, int] = {}
+    for record in records:
+        per_stratum[record["stratum"]] = per_stratum.get(record["stratum"], 0) + 1
+
+    total = len(records)
+    sizes = sorted(set(per_stratum.values()))
+    root = Path(__file__).resolve().parents[1]
+    docs = {
+        name: (root / name).read_text(encoding="utf-8")
+        for name in ("README.md", "README.zh-CN.md", "PROJECT_SPEC.md")
+    }
+
+    # Word-boundary, not substring. The first version of this assertion used
+    # `str(n) in text` and a deliberate mutation to a 5-record corpus sailed
+    # through it, because "5" is inside "165". A gate that a wrong number
+    # passes is worse than none: it reads as evidence.
+    def mentions(text: str, number: int) -> bool:
+        return re.search(rf"(?<![\d.,]){number}(?![\d.,])", text) is not None
+
+    assert len(sizes) == 1, (
+        f"the strata are uneven: {per_stratum}. The published per-repository "
+        "intervals all read [0.0%, 4.1%] because each repository contributed "
+        "the same n; unequal strata make that table wrong in a way no reader "
+        "can see."
+    )
+    for name, text in docs.items():
+        assert mentions(text, total), (
+            f"the real corpus holds {total} issues and {name} never mentions "
+            f"{total}. Every real-data number in it was measured on this file."
+        )
+        assert mentions(text, sizes[0]), (
+            f"each repository contributed {sizes[0]} issues and {name} does "
+            f"not mention {sizes[0]}"
+        )
+
+    # The headline, in the form it is actually written. Presence of "360"
+    # somewhere is weak; `0/360` is the claim.
+    assert f"0/{total}" in docs["README.md"], (
+        f"README.md's real-data headline is not of the form 0/{total}, so "
+        "either the corpus was resized or the blocked count is no longer zero "
+        "— and both change every interval in that section"
+    )
+
+    # The descriptive figures the README uses to argue the four repositories
+    # are genuinely different populations. A re-fetch moves all of them.
+    authors = len({r["author"] for r in records})
+    assert mentions(docs["README.md"], authors), (
+        f"{authors} distinct pseudonyms in the corpus, and README.md does not "
+        "say so — the 'issues that share almost nothing in shape' argument "
+        "rests on figures like this one"
+    )
+
+
+def test_the_output_scanner_count_is_asserted_and_not_only_printed() -> None:
+    """The number README publishes as a finding, computed as a finding.
+
+    "46 of the 165 trip this project's *own* output-side secret scanner; the
+    input audit blocked none of them" is one of the stronger sentences in the
+    README, and its derivation sat six lines below in `main()` as a `print`.
+    One regex edit in `ibr/output_audit.py` moves it. Both inputs are tracked
+    in git — `sandbox/corpus/benign.jsonl` is committed, unlike real.jsonl — so
+    this runs offline, in CI, and in the keyless worktree.
+    """
+    records = _records()
+    flagged = [r["issue_id"] for r in records if audit_output(r["body"]).blocked]
+
+    root = Path(__file__).resolve().parents[1]
+    for name in ("README.md", "README.zh-CN.md"):
+        text = (root / name).read_text(encoding="utf-8")
+        assert f"{len(flagged)} of the {len(records)}" in text or (
+            f"{len(records)} 个里有 {len(flagged)} 个" in text
+        ), (
+            f"{len(flagged)} of the {len(records)} synthetic issues trip "
+            f"ibr/output_audit.py's scanner, and {name} does not say so. "
+            "That sentence is the project's own evidence that its two "
+            "probabilistic layers disagree about the same corpus."
+        )
+
+
 def main() -> int:
     tests = [
         (name, fn)

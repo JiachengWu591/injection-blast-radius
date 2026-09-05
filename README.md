@@ -123,7 +123,7 @@ Two things this measurement is not. It is one run per issue, not three, so the
 Reader's own non-determinism means a re-run would pick a different ten; the rate
 estimates how often this happens, not which issues it happens to. And it is
 measured on the same synthetic corpus as everything else on this page — see
-[what that cannot tell you](#what-this-measurement-cannot-tell-you).
+[what that cannot tell you](#what-this-measurement-still-cannot-tell-you).
 
 ## Why it works
 
@@ -291,8 +291,8 @@ magnitude likelier to slip past than the others. It came back at **exactly
 rate this small gets. The other two single misses (urgency, long-context
 burial) are *not* distinguishable from the pooled baseline.
 
-And the punchline: `required_samples_per_group` says detecting a 4.0%-vs-0.05%
-gap at 80% power takes about **196 samples per group.** The earlier n=25 runs
+And the punchline: `required_samples_per_group` says detecting a 4.0%-vs-0.09%
+gap at 80% power takes about **202 samples per group.** The earlier n=25 runs
 were not just noisy, they were roughly an order of magnitude short of being
 able to see the one real effect in the data. Two of my own earlier conclusions
 here were wrong for exactly that reason — first "the same payload always
@@ -442,7 +442,7 @@ that trip a screener's heuristics, so the corpus is weighted toward those.
 | `edge_shape` — benign content in awkward shapes, from 6 to 4140 characters | 24 | 0 | [0.0%, 13.8%] | 0 |
 
 Every stratum is zero, including the two built specifically to sit on the
-boundary. Forty-six of the 165 trip this project's *own* output-side secret
+boundary. 46 of the 165 trip this project's *own* output-side secret
 scanner; the input audit blocked none of them.
 
 Only two issues drew any suspicion at all, and both are the kind of thing a
@@ -537,11 +537,29 @@ also names its author is one drop under two headings. Thirteen of `langchain`'s
 listed in the docs. That is a property of that issue tracker, not of the
 de-identifier.
 
-The split also shows up in what survived. **156 of the 360 kept issues name a
-third party**, and each carries a `names_third_party` flag recording it — so
-"we dropped everything that mentioned an organisation" and "we kept those" are
-distinguishable after the fact rather than a claim you have to take on trust.
-Under the merged flag those 156 were the ones at risk.
+The split should also show up in what *survived*, and this is where an earlier
+version of this section published a number it had not earned. It said **156 of
+the 360 kept issues name a third party**, from a `names_third_party` field on
+each record, and argued that the field made "we dropped everything that
+mentioned an organisation" and "we kept those" distinguishable after the fact
+rather than a claim you have to take on trust.
+
+The field was not measuring that. It was `"organisation" in
+reasoning.lower()` — a substring test for one spelling, over the review's
+free-text reasoning, which nothing asked to use that word. Across this corpus
+the same call's `note` field says "organiz" 33 times and "organis" 31 times, and
+31 of the 204 records the field marked *false* use "organiz" in their own note.
+The boolean it was ANDed with was dead code: that line runs only for records
+that already passed the organisation question, so it was always true. And the
+result carried its own refutation — the count ranked `pandas` above
+`langchain`, when `langchain` is the tracker whose issues name third-party
+packages often enough that 13 of its 17 drops are vendor spam.
+
+`names_third_party` is now the review's fifth question, judged like the other
+four, and an assertion pins that nothing derives it from `reasoning` again. The
+count will come from the next fetch. Until then this paragraph carries no
+number, which is the right amount of evidence for a claim whose measurement
+turned out to be a spelling check.
 
 Separating the two kinds of cause bounds the part that is actually a privacy
 filter:
@@ -588,8 +606,11 @@ the rate at 1.1%. One of the 1,080 calls did return `high_risk`, so this is not
 a rate of zero being measured — it is a rate small enough that 360 issues cannot
 resolve it.
 
-So the claim is narrow on purpose: this is what the audit does to issues of this
-*shape*. It does not establish what it would do to a real one. The 15
+So the claim is narrow on purpose: this is what the audit does to ordinary
+issues of these *shapes* — seven synthetic strata built on the false-positive
+boundary, and four real issue trackers. What it would do to a backlog unlike
+any of them is not established, and the four-repository caveat above is the
+honest statement of that. The 17
 assertions in [`tests/test_corpus.py`](tests/test_corpus.py) pin what both
 corpora are —
 every credential-shaped string fake-marked, the bait secret absent, every author
@@ -604,10 +625,16 @@ both together tells you which.
 
 ## Honest limitations
 
-- **The false-positive rate is measured on a synthetic corpus.** See
-  [above](#what-this-measurement-cannot-tell-you). The generator and the
-  auditor are both models, so the clean result may partly reflect shared blind
-  spots rather than a screening layer that never over-blocks.
+- **The false-positive rate is measured on 165 synthetic and 360 real
+  issues, and neither n resolves a rate this small.** See
+  [above](#what-this-measurement-still-cannot-tell-you). This bullet used to
+  read "measured on a synthetic corpus" and raise the shared-blind-spot worry —
+  the generator and the auditor are both models. The four real repositories
+  were added to answer exactly that, and the bullet was never updated, so the
+  section a sceptical reader trusts most went on retracting the work done to
+  satisfy them. What survives is narrower and still real: the bound is 1.1%,
+  one of the 1,080 real calls did come back `high_risk`, and all four
+  repositories are developer-facing open source on GitHub.
 - **The probabilistic layers are genuinely weak, and the project says so.** The
   bait secret is a run of zeros, so entropy scanning misses it entirely — the
   regex catches it. Two weak checks with different weaknesses, and neither is

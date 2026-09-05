@@ -4,7 +4,7 @@
     python false_positive_rate.py --limit 20      # a cheaper look first
     python false_positive_rate.py --fresh         # ignore stored samples
 
-README.md reports the false-positive rate as **0/200**. `audit_variance.py`
+README.md used to report the false-positive rate as **0/200**. `audit_variance.py`
 says what that actually is: "Samples the audit repeatedly on fixed inputs —
 every attack pattern plus the benign issue as a control." There is one benign
 fixture, so 0/200 is two hundred samples of a single issue. That measures the

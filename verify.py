@@ -192,7 +192,19 @@ def clean_checkout(report: Reporter) -> None:
         errors="replace",
     )
     if created.returncode != 0:
-        report.skip("clean checkout", created.stderr.strip()[:120])
+        # A failure, not a skip. Skips print under "All checks passed." and
+        # main() returns 0, so skipping here would let the pre-push hook pass
+        # while the one check CLAUDE.md says is the only way to catch a
+        # key-dependent "offline" test never ran. `git not found` above and
+        # `--skip-clean` are the legitimate skips: one is an environment
+        # without git, the other is the operator saying so out loud. "git is
+        # here and the worktree could not be created" is neither — the usual
+        # cause is a leftover .verify-clean that a previous cleanup failed to
+        # remove, which would otherwise disable this step permanently and
+        # silently.
+        print(f"      {created.stderr.strip()[:200]}")
+        print("      (a leftover .verify-clean is the usual cause: remove it)")
+        report.failures.append("clean checkout: could not create the worktree")
         return
 
     try:
@@ -225,12 +237,24 @@ def clean_checkout(report: Reporter) -> None:
                 cwd=target,
             )
     finally:
-        subprocess.run(
+        removed = subprocess.run(
             ["git", "worktree", "remove", str(target), "--force"],
             cwd=ROOT,
             capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         subprocess.run(["git", "worktree", "prune"], cwd=ROOT, capture_output=True)
+        # Checked, because on Windows this fails often enough to matter: a file
+        # handle held by antivirus or by a lingering child of the 18 suites
+        # just run in that directory is enough. Unchecked, the leftover makes
+        # the next run's `worktree add` fail, which is the path above.
+        if removed.returncode != 0 or target.exists():
+            print(f"      could not remove {target.name}: "
+                  f"{removed.stderr.strip()[:160]}")
+            print("      remove it before the next run, or the clean-checkout "
+                  "step will fail")
 
 
 def live_checks(report: Reporter) -> None:
