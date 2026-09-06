@@ -418,6 +418,78 @@ def test_no_shipped_issue_id_needed_the_rule_relaxed() -> None:
     print(f"      ({checked} shipped ids satisfy the rule)")
 
 
+def test_only_sandbox_fs_touches_the_filesystem_inside_the_package() -> None:
+    """CLAUDE.md's convention, and sandbox_fs's own docstring, as an assertion.
+
+    "Every read and write in this project goes through this module" is the
+    first line of `ibr/sandbox_fs.py`. It was not true: `ibr/variance.py`
+    called `Path.read_text` and `Path.open("a")` directly for the sample
+    store. Nothing escaped — the store lives under `sandbox/logs/` — but the
+    class accepted *any* path, and nine tests in `tests/test_variance.py` were
+    quietly exercising exactly that by building stores in the OS temp
+    directory, which §6 forbids reading or writing at all.
+
+    So the rule needed to be checkable rather than stated. AST rather than
+    grep: `verdict.summary` and `record["model"]` are attribute reads that a
+    substring search would trip over, and the interesting failure is a call
+    that looks like every other one.
+
+    Scope, and why it stops at `ibr/`: the package is the part that touches
+    sandbox files. `tools/` operates on the repository's own files — the
+    markdown it lints, the git hook it installs, the SVG it regenerates — all
+    outside the sandbox, where `sandbox_fs` would correctly refuse them. That
+    exemption is about *which files*, not about convenience, so it is stated
+    here rather than left as a list of forgiven paths.
+
+    What this can and cannot find: it catches a new direct call in `ibr/`. It
+    cannot catch one written through an alias (`from pathlib import Path as
+    P`), a `getattr`, or `os.open` — a determined bypass is still a bypass.
+    """
+    import ast
+
+    # Calls that read or write file contents. Deliberately not `exists`,
+    # `is_dir`, `glob` or `resolve`: those inspect the tree without moving
+    # bytes, `sandbox_fs` offers no equivalent for listing, and including them
+    # would make the gate fire on `_shards()` for something that is not I/O.
+    io_calls = frozenset(
+        {"read_text", "write_text", "read_bytes", "write_bytes", "open", "touch"}
+    )
+    allowed = {"ibr/sandbox_fs.py"}
+
+    root = Path(__file__).resolve().parents[1]
+    offenders: list[str] = []
+    checked = 0
+    for path in sorted((root / "ibr").glob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        checked += 1
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr in io_calls:
+                owner = func.value
+                if isinstance(owner, ast.Name) and owner.id == "sandbox_fs":
+                    continue
+                if rel in allowed:
+                    continue
+                offenders.append(f"{rel}:{node.lineno} .{func.attr}()")
+            elif isinstance(func, ast.Name) and func.id == "open":
+                if rel not in allowed:
+                    offenders.append(f"{rel}:{node.lineno} open()")
+
+    assert checked >= 15, f"only {checked} modules scanned; the glob has rotted"
+    assert not offenders, (
+        "file I/O in ibr/ that does not go through ibr/sandbox_fs.py:\n  "
+        + "\n  ".join(offenders)
+        + "\n\nCLAUDE.md: file reads and writes all go through ibr/sandbox_fs.py "
+        "with an explicit encoding, never a bare open(). That module is what "
+        "makes 'the demo can only touch ./sandbox' a property of the code "
+        "rather than a promise in the README, and a second path around it "
+        "makes the promise false without making anything fail."
+    )
+
+
 # --- credential hygiene ---------------------------------------------------
 
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -289,6 +290,69 @@ def test_a_documented_assertion_count_matches_the_file() -> None:
                 f"{doc_name} says {claimed} assertions in {rel}, which has "
                 f"{actual}. The claim is the evidence; it has to be countable."
             )
+
+
+def _github_slug(heading: str) -> str:
+    """GitHub's heading-anchor algorithm, as far as this project needs it.
+
+    Strip the `#` markers and any inline markup, lowercase, drop everything
+    that is not a letter, digit, space, hyphen or underscore, then spaces to
+    hyphens. CJK characters count as letters, which is what makes a Chinese
+    heading anchorable at all.
+    """
+    text = re.sub(r"^#+\s*", "", heading.strip())
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)  # links keep their text
+    text = text.replace("`", "").replace("*", "").replace("_", "")
+    out = []
+    for char in text.lower():
+        if char in " -":
+            out.append("-")
+        elif char.isalnum() or unicodedata.category(char).startswith("L"):
+            out.append(char)
+    return "".join(out)
+
+
+def test_every_in_document_anchor_link_resolves() -> None:
+    """A `[text](#anchor)` that points at nothing, in either language.
+
+    This is not hypothetical. Renaming a heading to "What this measurement
+    **still** cannot tell you" broke three inbound anchors — two in English,
+    one in Chinese — and nothing failed; they were found by reading the files.
+    The Chinese ones matter more, because a CJK anchor is harder to eyeball
+    than an English one and there is no way to tell a broken one from a
+    working one without following it.
+
+    What this can and cannot find: it compares links against *this* function's
+    model of GitHub's slug algorithm, not against GitHub. A link it accepts
+    could still break if GitHub changes the rule or if a heading contains
+    something this simplification mishandles; a link it rejects is wrong under
+    any reading, because the target heading does not exist at all.
+    """
+    root = Path(__file__).resolve().parents[1]
+    link_re = re.compile(r"\[[^\]]*\]\(#([^)\s]+)\)")
+
+    broken: list[str] = []
+    total = 0
+    for doc in sorted(root.glob("*.md")):
+        text = doc.read_text(encoding="utf-8")
+        slugs = {
+            _github_slug(line) for line in text.splitlines() if line.startswith("#")
+        }
+        for match in link_re.finditer(text):
+            total += 1
+            if match.group(1) not in slugs:
+                broken.append(f"{doc.name} -> #{match.group(1)}")
+
+    assert total >= 8, (
+        f"only {total} in-document anchor link(s) found; either the READMEs "
+        "stopped cross-referencing themselves or this pattern has rotted"
+    )
+    assert not broken, (
+        "anchor link(s) pointing at no heading:\n  "
+        + "\n  ".join(broken)
+        + "\n\nA heading was renamed without its inbound links. Renaming is "
+        "fine; leaving the links behind sends a reader to the top of the page."
+    )
 
 
 def _mermaid_skeleton(body: str) -> str:

@@ -38,6 +38,7 @@ from threading import Lock
 
 import openai
 
+from . import sandbox_fs
 from .config import AUDIT_MODEL
 from .issues import Issue
 from .pipeline import audit_only
@@ -282,7 +283,17 @@ class SampleStore:
 
     def _load(self) -> None:
         for shard in self._shards():
-            text = shard.read_text(encoding="utf-8")
+            # Through sandbox_fs, like every other read and write in this
+            # package. This module used to call `Path.read_text` and
+            # `Path.open("a")` directly — the store is under `sandbox/logs/`,
+            # so nothing escaped, but "every read and write goes through this
+            # module" was a claim in sandbox_fs.py's own docstring with one
+            # module quietly not doing it, and no assertion looked.
+            #
+            # Behaviour is unchanged: `append_text` opens with `newline=""`,
+            # which writes "\n" through untranslated on Windows exactly as
+            # `newline="\n"` did, and it creates the parent directory itself.
+            text = sandbox_fs.read_text(shard)
             lines = text.splitlines()
             # `record` writes one complete `json + "\n"` per call, so a file
             # ending in a newline contains only whole records. If it doesn't,
@@ -318,15 +329,16 @@ class SampleStore:
     def record(self, model: str, subject: str, verdict: str) -> None:
         with self._lock:
             self._samples.setdefault((model, subject), []).append(verdict)
-            self.shard_path.parent.mkdir(parents=True, exist_ok=True)
-            with self.shard_path.open("a", encoding="utf-8", newline="\n") as handle:
-                handle.write(
-                    json.dumps(
-                        {"model": model, "subject": subject, "verdict": verdict},
-                        ensure_ascii=False,
-                    )
-                    + "\n"
+            # One complete `json + "\n"` per call, which is what makes the
+            # torn-last-line rule in `_load` exact rather than a guess.
+            sandbox_fs.append_text(
+                self.shard_path,
+                json.dumps(
+                    {"model": model, "subject": subject, "verdict": verdict},
+                    ensure_ascii=False,
                 )
+                + "\n",
+            )
 
     def total(self) -> int:
         return sum(len(v) for v in self._samples.values())

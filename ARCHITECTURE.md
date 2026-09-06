@@ -19,7 +19,7 @@ replace to point this at real data.
 
 Nothing below is invented: every arrow is an import
 [`tests/test_architecture.py`](tests/test_architecture.py) actually finds. It is
-**not** the complete graph, though — 40 of the 50 real edges. The ten left out
+**not** the complete graph, though — 41 of the 51 real edges. The ten left out
 all point at `config`, which twelve modules read paths and constants from;
 drawing all twelve turns the picture into a fan and buries the structure.
 `llm` and `sandbox_fs` keep theirs, dotted, so the dependency is visible
@@ -87,6 +87,7 @@ flowchart TD
     batch --> issues
     variance --> issues
     variance --> schemas
+    variance --> sandbox_fs
     pipeline --> executor
     pipeline --> sinks
     pipeline --> schemas

@@ -12,7 +12,12 @@ Run standalone:
 
 from __future__ import annotations
 
+import itertools
 import json
+import os
+import shutil
+from collections.abc import Iterator
+from contextlib import contextmanager
 import sys
 from pathlib import Path
 from typing import Any, cast
@@ -20,7 +25,9 @@ from typing import Any, cast
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from audit_variance import render_markdown, render_terminal  # noqa: E402
+from ibr import sandbox_fs  # noqa: E402
 from ibr.bootstrap import ensure_sandbox  # noqa: E402
+from ibr.config import LOG_DIR  # noqa: E402
 from ibr.variance import (  # noqa: E402
     PASSES_THROUGH,
     CorpusVariance,
@@ -37,6 +44,33 @@ from model_comparison import render_markdown as render_comparison_markdown  # no
 from model_comparison import render_terminal as render_comparison_terminal  # noqa: E402
 
 ensure_sandbox()
+
+
+_TMP_COUNTER = itertools.count()
+
+
+@contextmanager
+def _sandbox_tmp() -> Iterator[Path]:
+    """A throwaway directory *inside* the sandbox.
+
+    These tests used `tempfile.TemporaryDirectory()`, which lands in the OS
+    temp directory — outside `./sandbox`. So every `SampleStore` built in them
+    wrote to a real file outside the sandbox, which PROJECT_SPEC.md §6 forbids
+    outright, and they were the only reachable way to do it: production callers
+    derive the store path from `SANDBOX_ROOT`, and `--corpus` contributes only
+    a filename stem.
+
+    Now that `SampleStore` goes through `ibr/sandbox_fs.py` like the rest of
+    the package, those paths are refused. That is the guard working rather than
+    a test problem, so the tests moved instead of the guard. Under
+    `sandbox/logs/`, which is already gitignored.
+    """
+    target = LOG_DIR / f"tmp-variance-{os.getpid()}-{next(_TMP_COUNTER)}"
+    sandbox_fs.ensure_dir(target)
+    try:
+        yield target
+    finally:
+        shutil.rmtree(sandbox_fs.resolve_in_sandbox(target), ignore_errors=True)
 
 
 # =========================================================================
@@ -291,12 +325,11 @@ def test_terminal_table_reports_intervals_for_every_subject() -> None:
 
 
 def test_sample_store_round_trips_and_accumulates() -> None:
-    import tempfile
     from pathlib import Path as _Path
 
     from ibr.variance import SampleStore
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with _sandbox_tmp() as tmp:
         path = _Path(tmp) / "samples.jsonl"
         store = SampleStore(path)
         assert store.total() == 0
@@ -329,12 +362,11 @@ def test_sample_store_writes_only_to_its_own_shard() -> None:
     resource rather than guarding it.
     """
     import os
-    import tempfile
     from pathlib import Path as _Path
 
     from ibr.variance import SampleStore
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with _sandbox_tmp() as tmp:
         base = _Path(tmp) / "audit_samples.jsonl"
         store = SampleStore(base)
         store.record("m", "s", "safe")
@@ -346,12 +378,11 @@ def test_sample_store_writes_only_to_its_own_shard() -> None:
 
 
 def test_sample_store_reads_every_shard_including_other_processes() -> None:
-    import tempfile
     from pathlib import Path as _Path
 
     from ibr.variance import SampleStore
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with _sandbox_tmp() as tmp:
         base = _Path(tmp) / "audit_samples.jsonl"
         # Two shards as if written by other processes, plus a legacy
         # pre-sharding file at the base path.
@@ -360,9 +391,9 @@ def test_sample_store_reads_every_shard_including_other_processes() -> None:
             ("audit_samples.222.jsonl", "suspicious"),
             ("audit_samples.jsonl", "high_risk"),
         ):
-            (_Path(tmp) / name).write_text(
+            sandbox_fs.write_text(
+                _Path(tmp) / name,
                 json.dumps({"model": "m", "subject": "s", "verdict": verdict}) + "\n",
-                encoding="utf-8",
             )
 
         store = SampleStore(base)
@@ -379,17 +410,16 @@ def test_sample_store_tolerates_a_shard_being_written_right_now() -> None:
     a guess: it stops a concurrent run from crashing the reader, and a corrupt
     line that happens to be last but properly terminated is still fatal.
     """
-    import tempfile
     from pathlib import Path as _Path
 
     from ibr.variance import SampleStore
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with _sandbox_tmp() as tmp:
         base = _Path(tmp) / "audit_samples.jsonl"
         good = json.dumps({"model": "m", "subject": "s", "verdict": "safe"})
-        (_Path(tmp) / "audit_samples.999.jsonl").write_text(
+        sandbox_fs.write_text(
+            _Path(tmp) / "audit_samples.999.jsonl",
             good + "\n" + good + "\n" + '{"model": "m", "subj',  # mid-write
-            encoding="utf-8",
         )
 
         store = SampleStore(base)
@@ -397,8 +427,9 @@ def test_sample_store_tolerates_a_shard_being_written_right_now() -> None:
         assert store.partial_lines_skipped == 1
 
         # Damage that is not at the end is still fatal.
-        (_Path(tmp) / "audit_samples.998.jsonl").write_text(
-            good + "\ntorn in the middle\n" + good + "\n", encoding="utf-8"
+        sandbox_fs.write_text(
+            _Path(tmp) / "audit_samples.998.jsonl",
+            good + "\ntorn in the middle\n" + good + "\n",
         )
         try:
             SampleStore(base)
@@ -409,8 +440,9 @@ def test_sample_store_tolerates_a_shard_being_written_right_now() -> None:
 
         # A malformed final line that IS newline-terminated was fully written,
         # so it is damage rather than a live writer.
-        (_Path(tmp) / "audit_samples.997.jsonl").write_text(
-            good + "\nfully written but garbage\n", encoding="utf-8"
+        sandbox_fs.write_text(
+            _Path(tmp) / "audit_samples.997.jsonl",
+            good + "\nfully written but garbage\n",
         )
         try:
             SampleStore(base)
@@ -424,17 +456,16 @@ def test_sample_store_tolerates_a_shard_being_written_right_now() -> None:
 
 def test_sample_store_rejects_a_corrupt_file() -> None:
     """Fail-closed: silently dropping samples would distort the denominator."""
-    import tempfile
     from pathlib import Path as _Path
 
     from ibr.variance import SampleStore
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with _sandbox_tmp() as tmp:
         path = _Path(tmp) / "samples.jsonl"
-        path.write_text(
+        sandbox_fs.write_text(
+            path,
             '{"model": "m", "subject": "s", "verdict": "high_risk"}\n'
             "not json at all\n",
-            encoding="utf-8",
         )
         try:
             SampleStore(path)
@@ -445,16 +476,15 @@ def test_sample_store_rejects_a_corrupt_file() -> None:
 
 
 def test_sample_store_rejects_an_unknown_verdict() -> None:
-    import tempfile
     from pathlib import Path as _Path
 
     from ibr.variance import SampleStore
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with _sandbox_tmp() as tmp:
         path = _Path(tmp) / "samples.jsonl"
-        path.write_text(
+        sandbox_fs.write_text(
+            path,
             '{"model": "m", "subject": "s", "verdict": "totally_fine"}\n',
-            encoding="utf-8",
         )
         try:
             SampleStore(path)
@@ -470,13 +500,12 @@ def test_measure_subject_reuses_stored_samples_without_calling_out() -> None:
     If this regressed, a resumed run would silently re-bill every sample it
     already had — the failure would be invisible except on the invoice.
     """
-    import tempfile
     from pathlib import Path as _Path
 
     from ibr.issues import Issue
     from ibr.variance import SampleStore, measure_subject
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with _sandbox_tmp() as tmp:
         path = _Path(tmp) / "samples.jsonl"
         store = SampleStore(path)
         for _ in range(5):
@@ -501,13 +530,12 @@ def test_measure_subject_reuses_stored_samples_without_calling_out() -> None:
 
 def test_measure_subject_caps_reuse_at_the_requested_n() -> None:
     """Asking for fewer samples than are stored must not inflate n."""
-    import tempfile
     from pathlib import Path as _Path
 
     from ibr.issues import Issue
     from ibr.variance import SampleStore, measure_subject
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with _sandbox_tmp() as tmp:
         store = SampleStore(_Path(tmp) / "samples.jsonl")
         for _ in range(10):
             store.record("test-model", "subj", "high_risk")
@@ -588,7 +616,6 @@ def test_a_successful_verdict_is_written_to_the_sample_store() -> None:
     reaching disk, and a store that silently wrote nothing would look
     identical to one that worked until the next run re-ran everything.
     """
-    import tempfile
     from pathlib import Path as _Path
 
     from ibr import variance as _variance
@@ -611,7 +638,7 @@ def test_a_successful_verdict_is_written_to_the_sample_store() -> None:
             matched_patterns=(),
         )
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with _sandbox_tmp() as tmp:
         store = SampleStore(_Path(tmp) / "audit_samples.jsonl")
         progress: list[tuple[int, int]] = []
         _variance.audit_only = always_suspicious
@@ -647,7 +674,6 @@ def test_a_successful_verdict_is_written_to_the_sample_store() -> None:
 
 def test_a_failed_audit_call_is_never_written_to_the_sample_store() -> None:
     """A poisoned store would survive the process and contaminate later runs."""
-    import tempfile
     from pathlib import Path as _Path
 
     import openai as _openai
@@ -668,7 +694,7 @@ def test_a_failed_audit_call_is_never_written_to_the_sample_store() -> None:
     # before anything uses it.
     fake_client = cast("Any", object())
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with _sandbox_tmp() as tmp:
         store = SampleStore(_Path(tmp) / "samples.jsonl")
         _pipeline.call_structured_tool = always_fails
         try:
