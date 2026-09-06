@@ -283,6 +283,61 @@ def test_the_ledger_lock_serializes_concurrent_appends() -> None:
     assert ledger.state().get(str(key)) == "intent"
 
 
+def test_state_and_check_also_wait_for_the_ledger_lock() -> None:
+    """The lock above only closed writer-vs-writer. A second review found the
+    same rewrite is just as unsafe against an unlocked reader.
+
+    `_heal_torn_tail`'s rewrite branch calls `sandbox_fs.write_text`, which
+    truncates the file on open and only then writes the new content — a
+    real, non-atomic gap that `_append` now holds `_lock` across. But
+    `state()` (and therefore `check()`) used to read straight past that gap
+    with no lock at all, so a `check()` for one key could land inside
+    another key's in-flight heal-rewrite and see the whole file as empty or
+    partial — reporting `fresh` for an action that was already, durably,
+    `done`. Reproduced before this fix: seeding a ledger with an already-done
+    record plus a torn tail for a different key, then widening
+    `write_text`'s truncate-to-write window and polling `state()` from an
+    unlocked thread during a concurrent `intend()`-driven rewrite showed the
+    done record vanish for most of that window. `IdempotentSink._once` calls
+    exactly `ledger.check(key) == "done"` to decide whether to re-run
+    `publish_comment`/`add_label`, so this was a real duplicate-action risk
+    in `run_batch`'s shared-ledger `concurrency>1` path — not the narrower,
+    already-disclosed same-key `check()`-vs-`intend()` TOCTOU.
+
+    Same non-flaky proof as the test above: hold `_lock` from this thread
+    and show a `state()` call from another thread genuinely blocks.
+    """
+    import threading
+
+    ledger = _fresh_ledger()
+    key = ActionKey.of("comment", "1", "a")
+    ledger.done(key)
+
+    entered = threading.Event()
+    finished = threading.Event()
+    observed: dict[str, str] = {}
+
+    def call_state() -> None:
+        entered.set()
+        observed["phase"] = ledger.state().get(str(key), "MISSING")
+        finished.set()
+
+    with ledger._lock:  # simulates _append mid heal-and-write
+        worker = threading.Thread(target=call_state)
+        worker.start()
+        assert entered.wait(timeout=2), "worker thread never started"
+        assert not finished.wait(timeout=0.2), (
+            "a concurrent state() call completed while the lock was held — "
+            "state()/check() must wait for the same lock _append() takes, "
+            "or a reader can observe the ledger mid heal-rewrite and report "
+            "an already-done key as fresh"
+        )
+
+    assert finished.wait(timeout=2), "worker never completed after the lock was released"
+    worker.join(timeout=2)
+    assert observed["phase"] == "done"
+
+
 def test_the_ledger_tolerates_a_torn_last_line_only() -> None:
     """A crash mid-append truncates the last line; anything else is corruption.
 

@@ -192,9 +192,19 @@ class ActionLedger:
     model is — one process, many threads sharing one object. It does not
     reach across processes, and it does not close the separate, disclosed
     limitation that two callers can still race a `check()` against an
-    `intend()` (ARCHITECTURE.md already states the append itself carries no
-    ordering guarantee beyond one call being atomic); it closes the specific
-    data-loss window `_heal_torn_tail`'s rewrite introduced.
+    `intend()` for the *same* key (ARCHITECTURE.md already states the append
+    itself carries no ordering guarantee beyond one call being atomic); it
+    closes the data-loss and stale-read window `_heal_torn_tail`'s rewrite
+    introduced.
+
+    That window was originally closed for `_append` only. A second review
+    found `state()` (and therefore `check()`) reading straight past it
+    unlocked: `_heal_torn_tail`'s rewrite truncates the whole file before
+    writing the new content, so a `check()` for one key landing in that gap
+    could see the file empty or partial and report an unrelated,
+    already-`done` key as `fresh` — reachable through
+    `IdempotentSink._once` on every single action, not only while healing.
+    `state()` takes `_lock` too now, for exactly that reason.
     """
 
     path: Path = LEDGER_PATH
@@ -241,14 +251,25 @@ class ActionLedger:
 
     def state(self) -> dict[str, str]:
         """Latest phase per action key. Later lines win, which is what makes
-        `confirm` and `discard` work by appending rather than rewriting."""
-        latest: dict[str, str] = {}
-        for entry in self._lines():
-            key = entry.get("key", "")
-            phase = entry.get("phase", "")
-            if key and phase:
-                latest[key] = phase
-        return latest
+        `confirm` and `discard` work by appending rather than rewriting.
+
+        Takes `_lock`, the same one `_append` holds across its heal-then-write
+        sequence: `_heal_torn_tail`'s rewrite branch truncates the whole file
+        on open and only writes the new content afterward, so an unlocked
+        read landing in that gap could see the file empty or partial and
+        report an unrelated, already-`done` key as `fresh` — a real
+        duplicate-action risk through `check()`, not just a stale read. A
+        second review reproduced exactly that before this lock covered
+        `state()` too; see `test_state_and_check_also_wait_for_the_ledger_lock`.
+        """
+        with self._lock:
+            latest: dict[str, str] = {}
+            for entry in self._lines():
+                key = entry.get("key", "")
+                phase = entry.get("phase", "")
+                if key and phase:
+                    latest[key] = phase
+            return latest
 
     def _heal_torn_tail(self) -> None:
         """Terminate an unterminated last line before writing, one way or another.
