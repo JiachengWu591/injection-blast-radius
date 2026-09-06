@@ -119,7 +119,7 @@ _Posted automatically by the triage assistant._
 | **Schema 校验。** 原始模型输出进去；要么出来一个完全校验过的 frozen dataclass，要么抛异常。没有部分接受。 | [`ibr/schemas.py:96`](ibr/schemas.py#L96) 和 [`ibr/schemas.py:165`](ibr/schemas.py#L165)，建立在 [`ibr/schemas.py:185-224`](ibr/schemas.py#L185-L224) 的原语之上 |
 | **白名单。** `suggested_action` 先对照一个固定元组校验，再经由一个 `match` 分派，其分支就是这个系统能做的全部事情。 | [`ibr/executor.py:122`](ibr/executor.py#L122)（枚举校验）和 [`ibr/executor.py:128-164`](ibr/executor.py#L128-L172)（那个 `match`） |
 | **静态输出集。** 系统能发布的**评论正文**的每一个字节，全部枚举完。没有任何模型生成的内容被插值进去；而唯一会进入已发布行的、来自 issue 的值——sink 自己那圈框架里的 id——在 frozen dataclass 上被约束成 `[A-Za-z0-9._-]{1,64}`。 | [`ibr/executor.py:46`](ibr/executor.py#L46) |
-| **跨越点。** 这行以上的代码见过原始不可信文本。这行以下，**能到达 Executor** 的只有那个已校验对象的两个枚举字段——自由文本还会再被读一次写进日志记录，然后就到此为止。 | [`ibr/pipeline.py:385`](ibr/pipeline.py#L385) |
+| **跨越点。** 这行以上的代码见过原始不可信文本。这行以下，**能到达 Executor** 的只有那个已校验对象的两个枚举字段——自由文本还会再被读一次写进日志记录，然后就到此为止。 | [`ibr/pipeline.py:413`](ibr/pipeline.py#L413) |
 
 有两条断言专门用于防止这些保证腐烂：
 

@@ -52,15 +52,62 @@ class IssueOutcome:
     error: str | None = None
     published: str | None = None
     labels: tuple[str, ...] = ()
+    log_write_error: str | None = None
+    """Set when the pipeline's own trace log could not be written for this
+    issue — a disk-full or held-file-handle `OSError`, from `ibr/pipeline.py`.
+
+    Deliberately separate from `error`, which is reserved for `status ==
+    "failed"`. `action` and `status` above are already final and correct when
+    this is set: `execute()` had already run, published or not, before the
+    trace write was even attempted, so a broken log write must not read as
+    the action never having happened — see `ibr/pipeline.py`'s `_emit_log`.
+    """
+    audit_completed: bool = True
+    """False when `risk_level` is the fail-closed default, not a verdict.
+
+    This project has shipped "a failed call read as a decision" twice before
+    — see the module docstring — and `_outcome_from` dropping this exact field
+    from `AuditVerdict` was a third instance: an audit timeout or connection
+    error fails closed to `action="no_action"`, `risk_level="high_risk"`
+    inside `run_isolated` without raising, so it never reached the `except`
+    clauses below. Read only through `blocked_by_audit`, never compared
+    directly — see there for why.
+    """
 
     @property
     def blocked_by_audit(self) -> bool:
         """The audit short-circuited, so the Reader never saw the issue.
 
         `suspicious` passes through — only `high_risk` stops the pipeline — so
-        this is not "the audit was suspicious", it is "the audit refused".
+        this is not "the audit was suspicious", it is "the audit refused". And
+        only when the audit call itself completed: a timeout or connection
+        error also fails closed to `high_risk` (PROJECT_SPEC.md §1.4), and
+        without `audit_completed` an outage during `batch_dry_run.py` rendered
+        as a 100% false-positive rate against whatever issues were in flight —
+        reproduced, not hypothetical: one patched timeout on an ordinary bug
+        report printed `blocked by the audit: 1 (100.0%)`, `errors: 0`, exit 0.
         """
-        return self.status == "no_action" and self.risk_level == "high_risk"
+        return (
+            self.status == "no_action"
+            and self.risk_level == "high_risk"
+            and self.audit_completed
+        )
+
+    @property
+    def audit_call_failed(self) -> bool:
+        """The audit never rendered a verdict — an outage, not a finding.
+
+        Same shape as `blocked_by_audit` but the other half of the split:
+        this is the bucket `blocked_by_audit` now excludes. Reported
+        separately rather than folded into `BatchReport.failed`, because the
+        pipeline did complete and correctly chose `no_action` — nothing here
+        is the "an exception escaped `run_isolated`" case those are for.
+        """
+        return (
+            self.status == "no_action"
+            and self.risk_level == "high_risk"
+            and not self.audit_completed
+        )
 
 
 @dataclass
@@ -80,6 +127,17 @@ class BatchReport:
     @property
     def blocked(self) -> list[IssueOutcome]:
         return [o for o in self.outcomes if o.blocked_by_audit]
+
+    @property
+    def audit_call_failures(self) -> list[IssueOutcome]:
+        """Audit calls that never completed. Not a verdict, so not in `blocked`."""
+        return [o for o in self.outcomes if o.audit_call_failed]
+
+    @property
+    def log_write_failures(self) -> list[IssueOutcome]:
+        """Runs whose trace log write failed. `action`/`status` are still
+        correct for these — see `IssueOutcome.log_write_error`."""
+        return [o for o in self.outcomes if o.log_write_error]
 
     @property
     def input_tokens(self) -> int:
@@ -125,6 +183,11 @@ def _outcome_from(
         stages=tuple(s.stage for s in result.stages),
         published=decision.published_comment if decision else None,
         labels=decision.labels_added if decision else (),
+        log_write_error=result.log_write_error,
+        # Carried through explicitly rather than left to default True: an
+        # audit call that timed out is `no_action` / `high_risk` exactly like
+        # a genuine refusal, and only this field tells the two apart.
+        audit_completed=result.audit.completed if result.audit else True,
     )
 
 

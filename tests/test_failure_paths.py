@@ -625,6 +625,95 @@ def test_a_poisoned_reader_publishing_a_comment_publishes_only_the_template() ->
     )
 
 
+def test_a_failed_trace_write_does_not_erase_a_published_action() -> None:
+    """The bug this project has shipped twice, one call site later.
+
+    `execute()` — which publishes through the sink — runs, and only after
+    that does `_emit_log` write the run's trace. A disk-full or held-handle
+    `OSError` at that point used to propagate out of `run_isolated` entirely:
+    a caller's `except Exception` (see ibr/batch.py) then had no way to tell
+    "the pipeline crashed before deciding anything" from "the pipeline decided
+    and acted, and only the *trace of that* failed to write" — both looked
+    identical, an escaped exception, and both were reported as
+    `status="failed", action="no_action"`. For a `reply_comment` outcome that
+    is not conservative, it is wrong: the comment is live and the report says
+    nothing happened.
+
+    Reproduced by patching the log-write call directly, since a real
+    disk-full or held-handle condition isn't something a test can construct.
+    """
+    reader_replies = _tool_response(
+        "report_issue_triage",
+        json.dumps(
+            {
+                "reasoning": "a normal bug report",
+                "issue_type": "bug",
+                "summary": "an ordinary crash",
+                "suggested_action": "reply_comment",
+            }
+        ),
+    )
+    client = replay.from_interactions(
+        [
+            _synthetic(
+                "a clean audit verdict, so the run reaches the Reader and "
+                "then the Executor, which is the arm this test needs to "
+                "reach before the trace write is even attempted",
+                _audit_verdict("safe"),
+            ),
+            _synthetic(
+                "a normal Reader classification choosing reply_comment, so "
+                "execute() actually publishes before the patched log write "
+                "is reached",
+                reader_replies,
+            ),
+        ],
+        name="pipeline_log_write_fails",
+    )
+
+    from ibr import pipeline as _pipeline
+
+    original_append_records = _pipeline.append_records
+
+    def always_fails_to_write(_records: object) -> None:
+        raise OSError("[Errno 28] No space left on device")
+
+    reset_public_comments()
+    reset_labels()
+    _pipeline.append_records = always_fails_to_write
+    try:
+        result = run_isolated(load_issue("benign"), client=cast("Any", client))
+    finally:
+        _pipeline.append_records = original_append_records
+
+    # The decision is still correctly reported — this is the fix.
+    assert result.action_taken == "reply_comment", (
+        f"the log-write failure changed what action was reported: "
+        f"{result.action_taken}"
+    )
+    published = sandbox_fs.read_text(PUBLIC_COMMENTS_PATH)
+    assert published.strip(), (
+        "the comment was not actually published — this test's premise "
+        "(execute() runs before the trace write) does not hold"
+    )
+    assert COMMENT_TEMPLATES["bug"] in published
+
+    # And the failure is visible, not silently swallowed.
+    assert result.log_write_error is not None
+    assert "No space left" in result.log_write_error
+
+    # No exception escaped run_isolated — the whole point of the fix.
+    from ibr.batch import _outcome_from
+
+    outcome = _outcome_from(result, load_issue("benign"), "plain", 1.0)
+    assert outcome.status == "acted", (
+        f"a published action was reported as {outcome.status!r} because its "
+        "trace log failed to write — exactly the bug this fix closes"
+    )
+    assert outcome.action == "reply_comment"
+    assert outcome.log_write_error is not None
+
+
 def test_report_flags_a_suspicious_verdict_for_human_review() -> None:
     """`suspicious` passes through, so the report has to say a human should look."""
     from ibr.comparison import run_scenario

@@ -68,6 +68,8 @@ def render(report: BatchReport) -> str:
 
     total = len(report.outcomes)
     blocked = report.blocked
+    audit_failures = report.audit_call_failures
+    log_failures = report.log_write_failures
     lines.append("")
     lines.append(f"issues run                     : {total}")
     lines.append(f"actions the system would take  : {len(report.acted)}")
@@ -75,10 +77,16 @@ def render(report: BatchReport) -> str:
         f"blocked by the audit           : {len(blocked)}"
         + (f"  ({len(blocked) / total:.1%})" if total else "")
     )
+    lines.append(f"audit call failed (not a verdict): {len(audit_failures)}")
     lines.append(f"errors (not decisions)         : {len(report.failed)}")
     if report.skipped_already_done:
         lines.append(
             f"skipped, already done          : {len(report.skipped_already_done)}"
+        )
+    if log_failures:
+        lines.append(
+            f"trace log write failed (action still correct above): "
+            f"{len(log_failures)}"
         )
 
     if blocked:
@@ -86,6 +94,31 @@ def render(report: BatchReport) -> str:
         lines.append("Blocked — these are the false-positive candidates:")
         for outcome in blocked:
             lines.append(f"  [{outcome.stratum}] {outcome.issue_id}")
+
+    if audit_failures:
+        lines.append("")
+        # Deliberately not folded into "Blocked": these are the row this
+        # commit exists for. The pipeline correctly failed closed to
+        # no_action, but the audit never rendered a verdict — a false
+        # positive requires a verdict, and an outage that happened to land on
+        # an ordinary issue is not evidence the audit would have refused it.
+        lines.append(
+            "Audit call failed — no_action here is a fail-closed default, "
+            "not a finding:"
+        )
+        for outcome in audit_failures:
+            lines.append(f"  [{outcome.stratum}] {outcome.issue_id}")
+
+    if log_failures:
+        lines.append("")
+        # The action and status above these rows are correct — execute()
+        # already ran before the trace write was even attempted. This is a
+        # lost observability record, not a lost or duplicated action.
+        lines.append("Trace log write failed for these (the action above still happened):")
+        for outcome in log_failures:
+            lines.append(
+                f"  [{outcome.stratum}] {outcome.issue_id}: {outcome.log_write_error}"
+            )
 
     if report.failed:
         lines.append("")

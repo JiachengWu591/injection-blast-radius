@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -336,6 +337,80 @@ def test_matrix_flags_an_isolated_leak_as_a_defect() -> None:
         audit_samples=("safe",),
     )
     assert "defect" in render_terminal([row]).lower()
+
+
+def test_a_failed_sampling_call_is_not_counted_as_a_verdict() -> None:
+    """The bug this project has shipped twice, in a third module.
+
+    `audit_only` fails closed to `high_risk` with `completed=False` rather
+    than raising — so it never reaches `run_row`'s `except openai.APIError`.
+    Before this fix, the sampling loop stored `.risk_level` alone, so a
+    provider outage during a sampling run rendered as the audit unanimously,
+    confidently choosing `high_risk` — a fail-closed default indistinguishable
+    from a real, stable verdict, in the one column that exists to measure
+    whether the audit is stable.
+
+    Driven through `_sample_audit` with a stand-in client rather than the full
+    `run_row`: `run_row` always builds a fresh client for `run_baseline` and
+    `run_isolated` too, which makes it a live-only function end to end.
+    `_sample_audit` is the part that isn't, and patching
+    `ibr.pipeline.call_structured_tool` reaches it exactly as a real timeout
+    would, since `audit_only` imports that name fresh on every call. Every
+    call is made to fail here — a stand-in client cannot produce a genuine
+    success, so "some fail, some don't" is covered separately, at the
+    dataclass level, by
+    test_audit_call_errors_are_reported_and_excluded_from_the_spread.
+    """
+    import openai as _openai
+
+    from attack_matrix import _sample_audit
+    from ibr import pipeline as _pipeline
+    from ibr.attack_corpus import PATTERNS
+
+    original = _pipeline.call_structured_tool
+
+    def always_times_out(**_kwargs: object) -> object:
+        raise _openai.APITimeoutError(request=None)
+
+    # No key, no network: a real call would need `client or build_client()`
+    # to pass, so `client` is a stand-in exactly like the equivalent tests in
+    # tests/test_variance.py — it is never touched, because the patched call
+    # raises before anything uses it.
+    fake_client = cast("Any", object())
+    _pipeline.call_structured_tool = always_times_out
+    try:
+        samples, errors = _sample_audit(
+            PATTERNS[0].as_issue(), 4, client=fake_client
+        )
+    finally:
+        _pipeline.call_structured_tool = original
+
+    assert errors == 4, f"expected all 4 calls to fail, got {errors} error(s)"
+    assert samples == (), (
+        f"a failed call was stored as a verdict: {samples}. A provider "
+        "outage during sampling must not render as the audit unanimously, "
+        "confidently choosing high_risk."
+    )
+
+
+def test_audit_call_errors_are_reported_and_excluded_from_the_spread() -> None:
+    """The rendered report must say a call failed, not fold it into a verdict."""
+    row = MatrixRow(
+        pattern=PATTERNS[0],
+        audit_samples=("high_risk", "high_risk"),
+        audit_call_errors=2,
+        isolated_action="label_bug",
+    )
+    # Only the two real verdicts are in the spread — errors are not smuggled
+    # in as a third "high_risk".
+    assert row.audit_spread == "high_risk×2"
+
+    terminal = render_terminal([row])
+    assert "2" in terminal and "failed" in terminal.lower()
+
+    markdown = render_markdown([row])
+    assert "2" in markdown
+    assert "timed out or hit a connection error" in markdown
 
 
 def test_matrix_markdown_includes_every_payload() -> None:

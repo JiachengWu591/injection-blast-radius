@@ -99,6 +99,18 @@ class PipelineResult:
     decision: ExecutorDecision | None = None
     stages: list[StageRecord] = field(default_factory=list)
     audit_bypass_simulated: bool = False
+    log_write_error: str | None = None
+    """Set when `_emit_log` could not append this run's trace record.
+
+    `decision` is already final by the time `_emit_log` runs — the action was
+    already taken. A disk-full or held-file-handle failure writing the
+    *trace* of that decision is a different failure from the decision itself,
+    and must not be allowed to make it look like the decision never happened.
+    Carried here rather than raised, so a caller reading `action_taken` still
+    gets the truth; a caller that cares the log is now incomplete for this run
+    can check this field instead of inferring it from an exception that no
+    longer occurs.
+    """
 
     @property
     def action_taken(self) -> str:
@@ -116,6 +128,19 @@ def _emit_log(result: PipelineResult, architecture: str = "isolated") -> None:
     One write point for the whole run, rather than a logging call sprinkled
     through every branch — the stage list is already the record of what
     happened, so deriving the log from it keeps the two from drifting apart.
+
+    Every call site reaches this only *after* `execute()` has already run —
+    the decision is made and enacted by this point, published or not. A
+    disk-full or held-file-handle `OSError` writing the trace of that
+    decision used to propagate out of `run_isolated` entirely, past the point
+    where a comment may have already been posted. The caller's own `except`
+    then reported the whole run as `status="failed"`, `action="no_action"` —
+    the exact bug this project's `IssueOutcome.status` split into three values
+    to stop happening ("a failure path and a decision path producing the same
+    value"), reintroduced one call site later, for the one part of a run that
+    genuinely cannot be undone. So a broken trace write is recorded on the
+    result and never raised: it is real information lost, not a reason to
+    misreport a decision that already happened.
     """
     records = [
         LogRecord(
@@ -145,7 +170,10 @@ def _emit_log(result: PipelineResult, architecture: str = "isolated") -> None:
         )
         for stage in result.stages
     ]
-    append_records(records)
+    try:
+        append_records(records)
+    except OSError as exc:
+        result.log_write_error = f"{type(exc).__name__}: {exc}"
 
 
 def _issue_as_untrusted_input(issue: Issue) -> str:

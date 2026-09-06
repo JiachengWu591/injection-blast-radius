@@ -476,6 +476,60 @@ def test_an_error_is_a_third_status_not_a_quiet_no_action() -> None:
     assert report.acted == []
 
 
+def test_an_audit_outage_is_not_a_false_positive_candidate() -> None:
+    """The third instance of the bug the module docstring already names twice.
+
+    `run_isolated` fails the audit call closed to `action="no_action"`,
+    `risk_level="high_risk"` *without raising* — so `run_batch`'s `except`
+    clauses never see it, and `_outcome_from` used to drop the one field
+    (`AuditVerdict.completed`) that tells this apart from a genuine refusal.
+    Reproduced exactly as it would happen: the provider times out on an
+    ordinary issue, and before this fix that rendered as `blocked_by_audit`
+    — a 100% false-positive rate against a legitimate bug report, with
+    `report.failed` empty and the exit code 0.
+    """
+    import openai as _openai
+
+    from ibr import pipeline as _pipeline
+
+    original = _pipeline.call_structured_tool
+
+    def always_times_out(**_kwargs: object) -> object:
+        raise _openai.APITimeoutError(request=cast("Any", None))
+
+    fake_client = cast("Any", object())
+    _pipeline.call_structured_tool = always_times_out
+    try:
+        report = run_batch(
+            [(_issue("outage-1"), "plain")],
+            sink=DryRunSink(),
+            client=fake_client,
+            concurrency=1,
+        )
+    finally:
+        _pipeline.call_structured_tool = original
+
+    assert len(report.outcomes) == 1
+    outcome = report.outcomes[0]
+    assert outcome.status == "no_action"
+    assert outcome.risk_level == "high_risk"
+    assert outcome.audit_completed is False, (
+        "the audit call raised APITimeoutError, so completed must be False"
+    )
+
+    assert report.blocked == [], (
+        "an audit outage was counted as blocked_by_audit — a provider error "
+        "would render as a false-positive finding against a real issue"
+    )
+    assert [o.issue_id for o in report.audit_call_failures] == ["outage-1"], (
+        "the outage did not land in the bucket that exists to hold it"
+    )
+    assert report.failed == [], (
+        "the pipeline completed and correctly chose no_action; this is not "
+        "the 'an exception escaped run_isolated' case report.failed is for"
+    )
+
+
 def test_one_bad_issue_does_not_end_the_batch() -> None:
     class ExplodesOnce:
         def __init__(self) -> None:
@@ -632,6 +686,36 @@ def test_the_report_separates_blocked_from_acted_from_failed() -> None:
     assert set(report.by_stratum()) == {"plain", "mentions_config"}
     # Rates are the caller's, so the report must not bake one in.
     assert abs(report.cost_usd(1.0, 2.0) - (17 / 1e6 + 16 / 1e6)) < 1e-12
+
+
+def test_blocked_and_audit_call_failed_are_mutually_exclusive() -> None:
+    """Same status, same risk_level — the only thing distinguishing them.
+
+    `audit_completed=False` is the whole signal. Any code that reads
+    `blocked_by_audit` without knowing this field exists would silently
+    include outages again, so this pins the property at the value level
+    rather than trusting `run_batch` never to regress it.
+    """
+    genuine_refusal = IssueOutcome(
+        issue_id="refused", status="no_action", action="no_action",
+        risk_level="high_risk", stratum="plain", duration_ms=1,
+        input_tokens=5, output_tokens=2, audit_completed=True,
+    )
+    outage = IssueOutcome(
+        issue_id="outage", status="no_action", action="no_action",
+        risk_level="high_risk", stratum="plain", duration_ms=1,
+        input_tokens=0, output_tokens=0, audit_completed=False,
+    )
+    assert genuine_refusal.blocked_by_audit is True
+    assert genuine_refusal.audit_call_failed is False
+    assert outage.blocked_by_audit is False
+    assert outage.audit_call_failed is True
+
+    from ibr.batch import BatchReport
+
+    report = BatchReport(outcomes=[genuine_refusal, outage])
+    assert [o.issue_id for o in report.blocked] == ["refused"]
+    assert [o.issue_id for o in report.audit_call_failures] == ["outage"]
 
 
 def test_the_corpus_loads_as_labelled_pairs() -> None:

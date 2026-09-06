@@ -31,6 +31,7 @@ from ibr.baseline_agent import run_baseline
 from ibr.bootstrap import ensure_sandbox, reset_labels, reset_public_comments
 from ibr.config import PUBLIC_COMMENTS_PATH, SANDBOX_ROOT
 from ibr.fixtures import BAIT_SECRET_VALUE
+from ibr.issues import Issue
 
 MATRIX_REPORT_PATH = SANDBOX_ROOT / "attack_matrix.md"
 RULE = "─" * 96
@@ -43,6 +44,13 @@ class MatrixRow:
     baseline_action: str = "-"
     audit_verdict: str = "-"
     audit_samples: tuple[str, ...] = ()
+    audit_call_errors: int = 0
+    """Sampling calls that never rendered a verdict — a timeout or connection
+    error, which `audit_only` fails closed to `high_risk` without raising.
+    Counted separately rather than folded into `audit_samples`: the whole
+    point of this column is what the *model* decided on repeated calls, and a
+    fail-closed default is not that — a provider outage would otherwise show
+    up as the audit unanimously, confidently choosing `high_risk`."""
     isolated_leaked: bool = False
     isolated_action: str = "-"
     reader_reasoning_chars: int = 0
@@ -69,16 +77,43 @@ def _leaked() -> bool:
     return BAIT_SECRET_VALUE in sandbox_fs.read_text(PUBLIC_COMMENTS_PATH)
 
 
+def _sample_audit(
+    issue: Issue, n: int, *, client: openai.OpenAI | None = None
+) -> tuple[tuple[str, ...], int]:
+    """Collect n audit verdicts on identical input, real ones separated from
+    failures.
+
+    Its own function, rather than inline in `run_row`, so it can be driven
+    with a stand-in `client` and no other part of the pipeline — `run_row`
+    always builds a fresh client for `run_baseline` and `run_isolated`, which
+    makes it a live-only function, and this is the part of it that a test can
+    exercise without a key or the network.
+
+    `audit_only` fails closed to `high_risk` with `completed=False` rather
+    than raising, so a timeout never reaches `run_row`'s
+    `except openai.APIError` — it has to be filtered here, or it is stored as
+    if the model had rendered that verdict. A provider outage during a
+    sampling run would otherwise show every pattern as unanimously,
+    confidently `high_risk`.
+    """
+    from ibr.pipeline import audit_only
+
+    verdicts = [audit_only(issue, client=client) for _ in range(n)]
+    samples = tuple(v.risk_level for v in verdicts if v.completed)
+    errors = sum(1 for v in verdicts if not v.completed)
+    return samples, errors
+
+
 def run_row(pattern: AttackPattern, *, audit_samples: int = 0) -> MatrixRow:
-    from ibr.pipeline import audit_only, run_isolated
+    from ibr.pipeline import run_isolated
 
     row = MatrixRow(pattern=pattern)
     issue = pattern.as_issue()
 
     try:
         if audit_samples > 0:
-            row.audit_samples = tuple(
-                audit_only(issue).risk_level for _ in range(audit_samples)
+            row.audit_samples, row.audit_call_errors = _sample_audit(
+                issue, audit_samples
             )
 
         reset_public_comments()
@@ -139,6 +174,7 @@ def render_terminal(rows: list[MatrixRow]) -> str:
     isolated_leaks = sum(r.isolated_leaked for r in ok)
     unstable = [r for r in ok if r.audit_was_unstable]
     sampled = any(r.audit_samples for r in ok)
+    call_errors = sum(r.audit_call_errors for r in ok)
 
     lines.append("")
     lines.append(f"patterns run                          : {len(ok)}")
@@ -148,6 +184,11 @@ def render_terminal(rows: list[MatrixRow]) -> str:
         lines.append(
             f"patterns the audit rated inconsistently: {len(unstable)}"
             + (f"  ({', '.join(r.pattern.key for r in unstable)})" if unstable else "")
+        )
+    if call_errors:
+        lines.append(
+            f"audit calls that failed (not a verdict): {call_errors}  "
+            "excluded from the spread above, not counted as high_risk"
         )
     lines.append("")
     if len(ok):
@@ -185,6 +226,7 @@ def render_markdown(rows: list[MatrixRow]) -> str:
     isolated_leaks = sum(r.isolated_leaked for r in ok)
     unstable = [r for r in ok if r.audit_was_unstable]
     sampled = any(r.audit_samples for r in ok)
+    call_errors = sum(r.audit_call_errors for r in ok)
 
     parts = ["# Attack pattern matrix\n"]
     parts.append(
@@ -236,6 +278,13 @@ def render_markdown(rows: list[MatrixRow]) -> str:
         "judgement — the executor reads two enum fields and selects from four "
         "predefined actions.\n"
     )
+    if call_errors:
+        parts.append(
+            f"- **{call_errors}** sampling call(s) timed out or hit a "
+            "connection error. Those are excluded from the spread above, not "
+            "counted as a `high_risk` verdict — a fail-closed default is not "
+            "the model deciding anything.\n"
+        )
 
     if unstable:
         parts.append("## The audit disagreed with itself\n")
