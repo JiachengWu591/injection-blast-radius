@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import unicodedata
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -47,9 +48,39 @@ def scrub(text: str) -> str:
     return text
 
 
+def _escape_control_characters(text: str) -> str:
+    """Make a C0/C1 control character visible instead of letting it act.
+
+    `str.split()` treats real whitespace (space, tab, newline, ...) as a
+    separator, so `summarize` already removes those. It does not touch ESC
+    (0x1b) or the other control characters that are not whitespace — an
+    issue titled `\\x1b[1A\\x1b[2K...` carries a terminal escape sequence
+    straight through `summarize` and into the JSON Lines log untouched, since
+    none of it is whitespace and none of it is the operator's API key.
+    `phase3_trace.py` then prints `input_summary` with no sanitisation of its
+    own, so the sequence executes in the operator's terminal: `\\x1b[1A\\x1b[2K`
+    moves the cursor up one line and erases it, letting issue text overwrite
+    the stage line printed immediately above with a forged one. §4 makes this
+    trace the artifact for seeing "what the content went through" — a title
+    is supposed to be inert data there, same as the body.
+
+    So every Unicode "Cc" character — including but not the same set as
+    whitespace — is turned into its escaped form (`\\x1b`, four visible
+    characters) rather than left able to act on whoever reads the summary.
+    Elsewhere in this project the Reader's free text is logged through `!r`
+    for the same reason; this is that same idea applied at the one place
+    every stage's input and output summary already passes through, so a
+    caller does not have to remember to do it themselves.
+    """
+    return "".join(
+        char if unicodedata.category(char) != "Cc" else f"\\x{ord(char):02x}"
+        for char in text
+    )
+
+
 def summarize(text: str, limit: int = SUMMARY_LIMIT) -> str:
-    """Collapse whitespace and truncate, so one record stays one line."""
-    collapsed = " ".join(scrub(text).split())
+    """Collapse whitespace, neutralise control characters, and truncate."""
+    collapsed = _escape_control_characters(" ".join(scrub(text).split()))
     if len(collapsed) <= limit:
         return collapsed
     return collapsed[: limit - 1] + "…"

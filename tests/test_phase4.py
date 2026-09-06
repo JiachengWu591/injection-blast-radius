@@ -229,6 +229,59 @@ def test_documentation_line_citations_still_point_at_the_right_code() -> None:
         )
 
 
+def test_documentation_citation_labels_match_their_hrefs() -> None:
+    """The two halves of one citation must describe the same lines.
+
+    Every line citation in this project's docs has two representations of
+    the same fact: a human-readable label like `` `ibr/executor.py:128-164` ``
+    and a clickable href like `(ibr/executor.py#L128-L172)`. An earlier
+    renumbering pass, run after adding lines above `executor.py`'s `match`,
+    updated every href correctly — including this one, to `#L128-L172` — but
+    that script's substitutions only handled a bare `file.py:N` label, never
+    a range label (`file.py:A-B`), so `128-164` sat next to `#L128-L172`
+    afterward: a reader who does not click sees one closing line, a reader
+    who does gets another.
+
+    test_documentation_line_citations_still_point_at_the_right_code checks
+    only the parenthesised href — that is what actually determines what a
+    reader sees on click — and never parses the bracketed label at all. This
+    is the missing other half: a citation is only honest if both halves
+    agree with each other, not just with the file.
+    """
+    import re
+
+    root = Path(__file__).resolve().parents[1]
+    pair_re = re.compile(
+        r"\[`([\w./]+\.py):(\d+)(?:-(\d+))?`\]\(([\w./]+\.py)#L(\d+)(?:-L(\d+))?\)"
+    )
+
+    docs = sorted(p.name for p in root.glob("*.md") if p.name not in {"LICENSE.md"})
+    checked = 0
+    for doc_name in docs:
+        text = (root / doc_name).read_text(encoding="utf-8")
+        for match in pair_re.finditer(text):
+            label_file, label_start, label_end, href_file, href_start, href_end = (
+                match.groups()
+            )
+            checked += 1
+            assert label_file == href_file, (
+                f"{doc_name}: label names {label_file!r}, href names "
+                f"{href_file!r} in {match.group(0)!r}"
+            )
+            assert int(label_start) == int(href_start), (
+                f"{doc_name}: label says line {label_start}, href says "
+                f"{href_start} in {match.group(0)!r}"
+            )
+            label_last = int(label_end) if label_end else int(label_start)
+            href_last = int(href_end) if href_end else int(href_start)
+            assert label_last == href_last, (
+                f"{doc_name}: label's range ends at {label_last}, href's ends "
+                f"at {href_last} in {match.group(0)!r} — renumbering one half "
+                "and not the other is exactly how this drifted before."
+            )
+    assert checked >= 10, f"expected several labelled citations, found {checked}"
+
+
 # "N assertions in tests/X.py" — a doc claim about a file's own contents, and
 # the one kind of citation the line-number gate above cannot see. The English
 # README said "Nine assertions in tests/test_corpus.py" for as long as that file

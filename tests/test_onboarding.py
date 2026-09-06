@@ -149,6 +149,26 @@ def test_the_coverage_gate_is_the_same_list_in_ci_and_locally() -> None:
         f"  only in CI:        {sorted(remote - local)}\n"
         "CI's copy is the one that blocks a merge."
     )
+
+    # Agreement is not existence. `coverage report --include=<glob>` silently
+    # ignores a pattern that matches zero files rather than failing — verified
+    # against this project's own .coverage data: pointing --include at a
+    # 6-pattern list where one entry is misspelled prints the other five at
+    # 100% and exits 0, dropping the sixth from the gate with no signal at
+    # all. And a typo made in both files at once — a plausible way to make
+    # one, since they are meant to be edited together — would still pass the
+    # equality check above, because both sides would agree on the same wrong
+    # name. So every gated name has to resolve to a real file, checked here
+    # rather than left to coverage's own silence.
+    for module in sorted(local):
+        assert (ROOT / module).is_file(), (
+            f"{module!r} is named in the coverage gate but no such file "
+            "exists. coverage silently drops an --include pattern that "
+            "matches nothing instead of failing, so this module would be "
+            "gone from the 100%-coverage gate while verify.py and CI both "
+            "kept reporting success."
+        )
+
     assert "ibr/output_audit.py" in local, (
         "the output audit is off the coverage gate. It runs inside _publish, "
         "before the sink, and is the last check before anything becomes "

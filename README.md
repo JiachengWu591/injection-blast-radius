@@ -146,7 +146,7 @@ anything if you can point at the lines that implement it. Four places:
 | What | Where |
 |---|---|
 | **Schema validation.** Raw model output goes in; either a fully validated frozen dataclass comes out, or it raises. No partial acceptance. | [`ibr/schemas.py:96`](ibr/schemas.py#L96) and [`ibr/schemas.py:165`](ibr/schemas.py#L165), built on the primitives at [`ibr/schemas.py:185-224`](ibr/schemas.py#L185-L224) |
-| **The whitelist.** `suggested_action` is checked against a fixed tuple, then dispatched through a `match` whose arms are the complete set of things this system can do. | [`ibr/executor.py:122`](ibr/executor.py#L122) (enum check) and [`ibr/executor.py:128-164`](ibr/executor.py#L128-L172) (the `match`) |
+| **The whitelist.** `suggested_action` is checked against a fixed tuple, then dispatched through a `match` whose arms are the complete set of things this system can do. | [`ibr/executor.py:122`](ibr/executor.py#L122) (enum check) and [`ibr/executor.py:128-172`](ibr/executor.py#L128-L172) (the `match`) |
 | **The static output set.** Every byte of comment body the system can publish, enumerated. Nothing model-generated is interpolated in, and the one issue-derived value that reaches a published line — the id, in the sink's own framing — is constrained to `[A-Za-z0-9._-]{1,64}` on the frozen dataclass. | [`ibr/executor.py:46`](ibr/executor.py#L46) |
 | **The crossing point.** Above this line, code has seen raw untrusted text. Below it, only the validated object's two enum fields reach the Executor — the free text is read once more into the log record and goes no further. | [`ibr/pipeline.py:413`](ibr/pipeline.py#L413) |
 

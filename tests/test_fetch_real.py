@@ -40,9 +40,11 @@ from __future__ import annotations
 
 import http.client
 import json
+from dataclasses import dataclass
 import sys
 import urllib.error
 from pathlib import Path
+from typing import Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -114,6 +116,107 @@ def test_a_programming_error_is_not_treated_as_transient() -> None:
         assert not isinstance(exc, TRANSIENT), (
             f"{type(exc).__name__} would be retried and then silently swallowed"
         )
+
+
+# --- the review verdict is validated, not trusted ---------------------------
+
+
+@dataclass(frozen=True)
+class _FakeCall:
+    """A stand-in for ibr.llm.StructuredCall, carrying only what review() reads."""
+
+    payload: dict
+
+
+def test_a_null_answer_is_refused_not_kept() -> None:
+    """"Default to true when unsure" is the schema's instruction to the model.
+
+    Nothing enforced it. `"type": "boolean"` does not forbid JSON `null`, and
+    `verdict[flag]` on `None` is falsy — read by `harvest()` as "this flag is
+    False", i.e. the opposite of the schema's own instruction, for exactly
+    the case ("I cannot tell who this is") that instruction exists for. An
+    issue the model could not assess would have been written to
+    sandbox/corpus/real.jsonl.
+    """
+    import tools.fetch_real_corpus as fetcher
+
+    original = fetcher.call_structured_tool
+    fetcher.call_structured_tool = lambda **_kwargs: _FakeCall(
+        {
+            "reasoning": "I cannot tell who this is",
+            "identifies_person": None,
+            "ties_reporter_to_organisation": None,
+            "promotional": None,
+            "ordinary_issue": True,
+            "names_third_party": False,
+            "note": "",
+        }
+    )
+    try:
+        verdict = fetcher.review(
+            "t", "b", client=cast("Any", object()), model="m"
+        )
+    finally:
+        fetcher.call_structured_tool = original
+
+    assert verdict is None, (
+        "a null answer on a disqualifying flag was accepted as False instead "
+        "of being refused — the issue would have been kept uncertain"
+    )
+
+
+def test_a_missing_field_is_refused_not_a_crash() -> None:
+    """The exact payload ibr/llm.py's own retry logic treats as a SUCCESS.
+
+    Truncated by the token limit and retried with "keep every field
+    shorter", per `tests/test_failure_paths.py::
+    test_truncated_tool_arguments_are_retried`. `verdict[flag]` on a missing
+    key raises `KeyError`, uncaught between here and `main()` — one bad
+    review used to end the whole multi-repository fetch, discarding every
+    issue already reviewed and paid for.
+    """
+    import tools.fetch_real_corpus as fetcher
+
+    original = fetcher.call_structured_tool
+    fetcher.call_structured_tool = lambda **_kwargs: _FakeCall(
+        {"reasoning": "shorter this time"}
+    )
+    try:
+        verdict = fetcher.review(
+            "t", "b", client=cast("Any", object()), model="m"
+        )
+    finally:
+        fetcher.call_structured_tool = original
+
+    assert verdict is None, (
+        "a payload missing every flag was returned as if it were usable — "
+        "harvest() would raise KeyError reading verdict['identifies_person']"
+    )
+
+
+def test_a_well_formed_verdict_still_passes() -> None:
+    """The validation must not reject what it exists to let through."""
+    import tools.fetch_real_corpus as fetcher
+
+    original = fetcher.call_structured_tool
+    well_formed = {
+        "reasoning": "an ordinary bug report",
+        "identifies_person": False,
+        "ties_reporter_to_organisation": False,
+        "promotional": False,
+        "ordinary_issue": True,
+        "names_third_party": True,
+        "note": "routine crash report",
+    }
+    fetcher.call_structured_tool = lambda **_kwargs: _FakeCall(dict(well_formed))
+    try:
+        verdict = fetcher.review(
+            "t", "b", client=cast("Any", object()), model="m"
+        )
+    finally:
+        fetcher.call_structured_tool = original
+
+    assert verdict == well_formed
 
 
 # --- the id namespace ------------------------------------------------------

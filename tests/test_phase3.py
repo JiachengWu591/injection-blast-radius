@@ -247,6 +247,78 @@ def test_summarize_collapses_whitespace_and_truncates() -> None:
     assert out.endswith("…")
 
 
+def test_summarize_neutralises_a_terminal_escape_sequence() -> None:
+    """An issue title is untrusted text, and this is what it can do unescaped.
+
+    `\\x1b[1A\\x1b[2K` moves a terminal's cursor up one line and erases it —
+    `str.split()` does not touch it (it is not whitespace), so it used to
+    reach the log and `phase3_trace.py`'s raw `print` unchanged, letting an
+    attacker overwrite the stage line printed immediately above with a forged
+    one. The fix has to make each control byte visible without mangling
+    ordinary multi-language text, which this project's own corpus uses
+    throughout.
+    """
+    payload = "\x1b[1A\x1b[2Ksecurity_audit  safe\x1b[0m"
+    out = summarize(payload)
+    assert "\x1b" not in out, "a raw ESC byte reached the summary"
+    assert out.count("\\x1b") == 3, (
+        f"expected all three escape sequences visibly escaped, got {out!r}"
+    )
+    # The readable payload text must survive — this is a control-character
+    # fix, not a content filter.
+    assert "security_audit" in out and "safe" in out
+
+    # Ordinary non-English text must be untouched: this is not a blanket
+    # non-ASCII filter, only C0/C1 control characters.
+    for ordinary in ("café", "日本語", "Привет", "🔥"):
+        assert summarize(ordinary) == ordinary
+
+
+def test_a_titled_ansi_payload_does_not_survive_into_a_real_trace() -> None:
+    """The exact reachable path: an issue title, through the real pipeline.
+
+    Reproduced end to end rather than at `summarize` alone, since the
+    finding's actual claim is about what an operator sees in
+    `sandbox/logs/pipeline.jsonl` after a real run.
+    """
+    from ibr.issues import Issue
+
+    clear_log()
+    poisoned_title = "\x1b[1A\x1b[2K\x1b[32msecurity_audit  safe\x1b[0m"
+    issue = Issue(issue_id="ansi-1", title=poisoned_title, author="a", body="b")
+
+    from ibr.pipeline import _issue_as_untrusted_input
+
+    untrusted = _issue_as_untrusted_input(issue)
+    assert poisoned_title in untrusted, (
+        "the fixture stopped exercising the path — the title must reach the "
+        "untrusted wrapper for this test to mean anything"
+    )
+
+    append_records(
+        [
+            LogRecord(
+                ts=utc_now(),
+                run_id="ansi-test",
+                architecture="isolated",
+                issue_id=issue.issue_id,
+                stage="security_audit",
+                outcome="high_risk",
+                duration_ms=1.0,
+                input_summary=summarize(untrusted),
+                output_summary="risk_level=high_risk",
+            )
+        ]
+    )
+    records = load_records()
+    assert len(records) == 1
+    assert "\x1b" not in records[0]["input_summary"], (
+        "a raw escape byte reached the persisted log record — printing it "
+        "would let the issue rewrite the operator's terminal"
+    )
+    assert "\\x1b" in records[0]["input_summary"]
+
+
 def test_round_trip_through_the_log_file() -> None:
     clear_log()
     run_id = new_run_id()

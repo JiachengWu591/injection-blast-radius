@@ -419,6 +419,66 @@ def candidates(
     return found
 
 
+class MalformedReview(RuntimeError):
+    """The review call returned something that only *looked* like REVIEW_SCHEMA."""
+
+
+def _parse_review_verdict(payload: object) -> dict:
+    """Validate the review's payload, or raise. Nothing else here did.
+
+    `call_structured_tool`'s own docstring is explicit that it does not do
+    this: "the caller still validates the payload through the parsers in
+    schemas.py" (ibr/llm.py). This caller never had one, so a payload that
+    only *shaped* like REVIEW_SCHEMA reached the rest of this script raw, two
+    ways.
+
+    A boolean field answered JSON `null`. `"type": "boolean"` in the schema
+    does not forbid it, and `verdict[flag]` on `None` is falsy — the opposite
+    of the schema's own instruction for these fields ("Default to true when
+    unsure — a person is the thing that must not leak"), for exactly the case
+    that instruction is about. An issue the model could not assess would have
+    been kept.
+
+    A field missing outright. Not hypothetical: it is exactly the payload
+    `ibr/llm.py`'s own retry logic accepts as a SUCCESS after a truncated call
+    — the retry prompt literally asks the model to keep every field shorter —
+    and `tests/test_failure_paths.py::test_truncated_tool_arguments_are_retried`
+    pins that as intended behaviour one layer down. `verdict[flag]` on a
+    missing key raises `KeyError`, which nothing between here and `main()`
+    catches, so one truncated review call took down the entire multi-
+    repository run — discarding every issue already fetched, de-identified,
+    and paid to review.
+
+    Both are fixed the same way as everywhere else in this project: fail
+    closed. A verdict that cannot be trusted is not a kept issue and not a
+    crashed run — it is a failed review, exactly like a `StructuredOutputFailure`
+    or an `openai.APIError`, which `harvest()` already counts and continues
+    past.
+    """
+    if not isinstance(payload, dict):
+        raise MalformedReview(f"expected an object, got {type(payload).__name__}")
+    for text_field in ("reasoning", "note"):
+        value = payload.get(text_field)
+        if not isinstance(value, str):
+            raise MalformedReview(f"{text_field!r} is {value!r}, not a string")
+    for flag in (
+        "identifies_person",
+        "ties_reporter_to_organisation",
+        "promotional",
+        "ordinary_issue",
+        "names_third_party",
+    ):
+        value = payload.get(flag)
+        if not isinstance(value, bool):
+            raise MalformedReview(
+                f"{flag!r} is {value!r}, not a boolean. A privacy-relevant "
+                "question must be answered true or false, not left null or "
+                "missing — this project fails closed rather than guess which "
+                "way 'unsure' should go."
+            )
+    return payload
+
+
 def review(
     title: str, body: str, *, client: openai.OpenAI, model: str
 ) -> dict | None:
@@ -434,8 +494,8 @@ def review(
             client=client,
             max_tokens=PIPELINE_MAX_TOKENS,
         )
-        return call.payload
-    except (StructuredOutputFailure, openai.APIError):
+        return _parse_review_verdict(call.payload)
+    except (StructuredOutputFailure, openai.APIError, MalformedReview):
         return None
 
 

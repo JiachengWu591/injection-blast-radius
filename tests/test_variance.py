@@ -409,24 +409,38 @@ def test_sample_store_tolerates_a_shard_being_written_right_now() -> None:
     only when the file is *also* unterminated makes the rule exact rather than
     a guess: it stops a concurrent run from crashing the reader, and a corrupt
     line that happens to be last but properly terminated is still fatal.
+
+    Each case below gets its own directory. The first version of this test
+    shared one directory across all three and never removed the shard the
+    second case wrote — so when the third case asked "is a terminated corrupt
+    line still fatal", `SampleStore(base)` glob-matched *both* the leftover
+    mid-file corruption from case two and the new file from case three, and
+    raised regardless of which one the assertion meant to be checking.
+    Confirmed by mutating the tolerance rule to skip a terminated corrupt line
+    too (`ibr/variance.py`'s `may_be_mid_write and number == len(lines)` widened
+    to accept any last line): with the shared directory, `--offline` still
+    passed 44/44; with each case isolated, this specific assertion catches it.
     """
     from pathlib import Path as _Path
 
     from ibr.variance import SampleStore
 
+    good = json.dumps({"model": "m", "subject": "s", "verdict": "safe"})
+
+    # Case 1: genuinely torn (no trailing newline) — a live writer, tolerated.
     with _sandbox_tmp() as tmp:
         base = _Path(tmp) / "audit_samples.jsonl"
-        good = json.dumps({"model": "m", "subject": "s", "verdict": "safe"})
         sandbox_fs.write_text(
             _Path(tmp) / "audit_samples.999.jsonl",
             good + "\n" + good + "\n" + '{"model": "m", "subj',  # mid-write
         )
-
         store = SampleStore(base)
         assert store.total() == 2
         assert store.partial_lines_skipped == 1
 
-        # Damage that is not at the end is still fatal.
+    # Case 2: damage that is not at the end — fatal under either rule.
+    with _sandbox_tmp() as tmp:
+        base = _Path(tmp) / "audit_samples.jsonl"
         sandbox_fs.write_text(
             _Path(tmp) / "audit_samples.998.jsonl",
             good + "\ntorn in the middle\n" + good + "\n",
@@ -438,16 +452,23 @@ def test_sample_store_tolerates_a_shard_being_written_right_now() -> None:
         else:
             raise AssertionError("mid-file corruption was tolerated")
 
-        # A malformed final line that IS newline-terminated was fully written,
-        # so it is damage rather than a live writer.
+    # Case 3: a malformed final line that IS newline-terminated. Fully
+    # written, so it is damage rather than a live writer — the one case that
+    # distinguishes the exact rule from the position-only rule it replaced.
+    # Its own directory, containing nothing else, is what makes a caught
+    # ValueError here mean this line specifically.
+    with _sandbox_tmp() as tmp:
+        base = _Path(tmp) / "audit_samples.jsonl"
         sandbox_fs.write_text(
             _Path(tmp) / "audit_samples.997.jsonl",
             good + "\nfully written but garbage\n",
         )
         try:
             SampleStore(base)
-        except ValueError:
-            pass
+        except ValueError as exc:
+            assert "audit_samples.997.jsonl" in str(exc), (
+                f"raised for the wrong file: {exc}"
+            )
         else:
             raise AssertionError(
                 "a terminated corrupt final line was mistaken for a live write"
