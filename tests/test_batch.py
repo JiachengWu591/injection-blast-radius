@@ -229,6 +229,60 @@ def test_an_operator_can_resolve_a_dangling_intent_either_way() -> None:
     assert len(discarded_inner.actions) == 1, "discard should allow a retry"
 
 
+def test_the_ledger_lock_serializes_concurrent_appends() -> None:
+    """The race a fresh review reproduced against the unlocked `_heal_torn_tail`.
+
+    `_heal_torn_tail` reads the whole ledger file, decides, and sometimes
+    rewrites it with a truncating `write_text` — and before `ActionLedger`
+    carried a lock, two threads racing that sequence could have one thread's
+    stale read overwrite the other's already-appended record, silently.
+    Reproduced then, with the real classes: thread A's `intend()` completed
+    and appeared in `state()`; thread B's own `_append` — using a read
+    captured before A's write — then called `write_text`, and A's key
+    disappeared from the file entirely. `run_batch`'s `concurrency>1` path is
+    exactly the scenario that creates this: one `ActionLedger` instance shared
+    across every `ThreadPoolExecutor` worker.
+
+    Proving the fix does not mean winning that race by luck against the OS
+    scheduler — that would make this test flaky in exactly the way a real
+    timing-dependent bug is supposed to escape a test suite. It means proving
+    two `_append` calls cannot interleave at all, which is what holding the
+    lock here, exactly as `_append` would mid heal-and-write, and confirming
+    a concurrent call genuinely blocks rather than proceeding, verifies
+    directly.
+    """
+    import threading
+
+    ledger = _fresh_ledger()
+    key = ActionKey.of("comment", "1", "a")
+
+    entered = threading.Event()
+    finished = threading.Event()
+
+    def call_intend() -> None:
+        entered.set()
+        ledger.intend(key)
+        finished.set()
+
+    with ledger._lock:  # simulates _append mid heal-and-write
+        worker = threading.Thread(target=call_intend)
+        worker.start()
+        assert entered.wait(timeout=2), "worker thread never started"
+        # The worker is blocked inside intend() -> _append(), waiting on the
+        # same lock this test already holds. It must not be able to finish.
+        assert not finished.wait(timeout=0.2), (
+            "a concurrent _append call completed while the lock was held — "
+            "two callers are not actually serialized, which is the exact gap "
+            "that let one thread's heal-rewrite erase another thread's "
+            "already-appended record"
+        )
+
+    # Released: the worker can now acquire the lock and finish.
+    assert finished.wait(timeout=2), "worker never completed after the lock was released"
+    worker.join(timeout=2)
+    assert ledger.state().get(str(key)) == "intent"
+
+
 def test_the_ledger_tolerates_a_torn_last_line_only() -> None:
     """A crash mid-append truncates the last line; anything else is corruption.
 
@@ -583,10 +637,15 @@ def test_the_concurrent_branch_runs_at_all() -> None:
 
     What this can and cannot show. It exercises the branch, so the ordering
     contract and the progress callback are now pinned and a crash in that arm
-    would fail a test. It does not prove the ledger is race-free: three threads
-    over distinct keys is not a stress test, and the unlocked append remains a
-    hazard for an adopter who wraps a real sink. That belongs in the
-    documentation, not in an assertion that would pass by luck.
+    would fail a test. It does not prove the ledger is race-free: three
+    threads over distinct keys is not a stress test. `_append` itself is now
+    serialized by a lock (see `test_the_ledger_lock_serializes_concurrent_appends`),
+    closing the torn-write data-loss race that motivated it — but `check()`
+    and `intend()` are still two separate lock acquisitions, so two callers
+    can still both observe "fresh" for the same key before either commits
+    "intent" and both go on to perform the same action. That check-then-act
+    race is a disclosed, still-open limitation, not something this test or
+    the lock claims to close.
     """
 
     class Exploding:

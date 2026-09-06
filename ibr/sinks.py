@@ -23,6 +23,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Lock
 from typing import Protocol, runtime_checkable
 
 from . import sandbox_fs
@@ -172,9 +173,32 @@ class ActionLedger:
     project that has a side effect outside the process (PROJECT_SPEC.md §1.4).
     An operator resolves it by looking at the destination and calling
     `confirm` or `discard`, which is a decision a person should make.
+
+    One ledger, one file, deliberately not sharded the way `SampleStore` is:
+    idempotency needs a single source of truth per action key, and any shard
+    combination being fine is exactly the property this class cannot have.
+    `run_batch`'s `concurrency>1` path shares one `ActionLedger` instance
+    across every `ThreadPoolExecutor` worker — the same object, the same
+    `self.path` — which is precisely the scenario `_lock` below exists for:
+    `_heal_torn_tail` reads the whole file, decides, and sometimes rewrites it
+    with a truncating `write_text`, and two threads racing that sequence
+    unlocked can have one thread's stale read overwrite the other's
+    already-appended record, silently. Reproduced before this lock existed:
+    thread A's `intend()` completes and appears in `state()`, thread B's own
+    `_append` (using a read captured before A's write) then calls
+    `write_text` and the key disappears from the file entirely.
+
+    The lock is in-process only, which is what `run_batch`'s own concurrency
+    model is — one process, many threads sharing one object. It does not
+    reach across processes, and it does not close the separate, disclosed
+    limitation that two callers can still race a `check()` against an
+    `intend()` (ARCHITECTURE.md already states the append itself carries no
+    ordering guarantee beyond one call being atomic); it closes the specific
+    data-loss window `_heal_torn_tail`'s rewrite introduced.
     """
 
     path: Path = LEDGER_PATH
+    _lock: Lock = field(default_factory=Lock, repr=False, compare=False)
 
     def _lines(self) -> list[dict[str, str]]:
         if not sandbox_fs.exists(self.path):
@@ -278,16 +302,23 @@ class ActionLedger:
             sandbox_fs.write_text(self.path, f"{text}\n")
 
     def _append(self, key: ActionKey, phase: str) -> None:
-        self._heal_torn_tail()
-        sandbox_fs.append_text(
-            self.path,
-            json.dumps(
-                {"key": str(key), "phase": phase, "ts": utc_now()},
-                ensure_ascii=False,
-                sort_keys=True,
+        # Heal-then-append has to be one atomic step from every other
+        # caller's point of view: `_heal_torn_tail` can rewrite the whole
+        # file, and two threads racing that rewrite is exactly how one
+        # thread's already-appended record used to vanish. See the class
+        # docstring; this lock is what makes that reproduction no longer
+        # reproduce.
+        with self._lock:
+            self._heal_torn_tail()
+            sandbox_fs.append_text(
+                self.path,
+                json.dumps(
+                    {"key": str(key), "phase": phase, "ts": utc_now()},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                + "\n",
             )
-            + "\n",
-        )
 
     def check(self, key: ActionKey) -> str:
         """"fresh", "done", or raise on a dangling intent."""

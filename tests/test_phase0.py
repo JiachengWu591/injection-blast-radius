@@ -268,6 +268,18 @@ def test_guard_refuses_reserved_device_names() -> None:
         "con:stream",
         "issues/nul ",
         "issues/com1:",
+        # A space AND a colon together — the combination the first version of
+        # this fix still missed. It stripped trailing spaces/dots from the
+        # whole component *before* splitting off the colon, so for "nul :"
+        # the component's actual last character is ":", the rstrip was a
+        # no-op, and the stem computed after the colon-split kept its
+        # trailing space ("nul ") — not a member of the device-name set.
+        # Confirmed against the real device: "nul :" is the NUL device, not
+        # a same-named file, exactly like "nul" and "nul " above.
+        "nul :",
+        "nul  :",
+        "com1 :",
+        "issues/nul :",
     ]
     for device in devices:
         try:
@@ -290,7 +302,7 @@ def test_the_device_guard_holds_end_to_end_through_read_text() -> None:
     a `SandboxViolation` here is the guard working; anything else, including a
     successful read of `""`, is the device answering instead of the guard.
     """
-    for device in ("nul ", "nul:", "com1 ", "con.", "nul  "):
+    for device in ("nul ", "nul:", "com1 ", "con.", "nul  ", "nul :", "com1 :"):
         try:
             content = sandbox_fs.read_text(device)
         except SandboxViolation:

@@ -183,6 +183,28 @@ class ReplayClient:
             # interaction's fingerprint check permanently and silently; this
             # is the one place that reaches every interaction regardless of
             # where it came from.
+            if "fingerprint" in interaction:
+                # Both keys present is not "prefer one" — it is ambiguous,
+                # and the ambiguity is exactly the shape a hand-edited or
+                # merge-corrupted cassette produces: a genuinely recorded
+                # interaction (which has "fingerprint") that also happens to
+                # carry a "synthetic"-named field (a stray note, a bad
+                # merge). The length check alone does not catch this,
+                # because it never asks whether "fingerprint" is also there —
+                # a real recording with an incidental 40-character "synthetic"
+                # value would have its fingerprint check silently skipped
+                # forever. Neither construction path in this project
+                # (`_synthetic()`, `RecordingClient`) ever produces both
+                # keys on one interaction, so this is fail-closed against a
+                # shape nothing legitimate creates.
+                raise CassetteMismatch(
+                    f"cassette {self._name!r} interaction {self.index} has "
+                    "both 'synthetic' and 'fingerprint' — that is ambiguous, "
+                    "not synthetic. A genuine recording never carries "
+                    "'synthetic', so this is most likely a hand-edited or "
+                    "merge-corrupted cassette. Remove whichever key does not "
+                    "belong rather than relying on one silently winning."
+                )
             reason = interaction.get("synthetic")
             if not isinstance(reason, str) or len(reason) < MIN_SYNTHETIC_REASON:
                 raise CassetteMismatch(

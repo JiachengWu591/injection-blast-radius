@@ -172,6 +172,44 @@ def test_a_thin_synthetic_reason_cannot_switch_off_the_fingerprint_check() -> No
     client.assert_fully_consumed()
 
 
+def test_a_stray_synthetic_key_cannot_silence_a_real_recordings_fingerprint() -> None:
+    """The length check alone does not ask whether this was ever synthetic.
+
+    `_synthetic()` never emits a `"fingerprint"` key and `RecordingClient`
+    never emits a `"synthetic"` one, so no legitimate construction path
+    produces both on the same interaction. The only route to that shape is a
+    hand-edited or merge-corrupted `tests/cassettes/*.json` file — exactly
+    the threat model this module's own docstrings describe — and before this
+    test existed, a >=40-character `"synthetic"` value sitting next to a real
+    (possibly stale) `"fingerprint"` silently won: the fingerprint comparison
+    was never reached at all, so a request that had genuinely drifted would
+    still be served the old recorded response.
+    """
+    hybrid = replay.from_interactions(
+        [
+            {
+                "fingerprint": "deadbeefdeadbeef",  # deliberately wrong
+                "synthetic": "x" * replay.MIN_SYNTHETIC_REASON,
+                "response": {"model": "m", "choices": [], "usage": None},
+            }
+        ],
+        name="hybrid-fingerprint-and-synthetic",
+    )
+    try:
+        hybrid.chat.completions.create(
+            model="a-different-model-than-was-recorded", messages=[]
+        )
+    except replay.CassetteMismatch as exc:
+        assert "ambiguous" in str(exc).lower()
+    else:
+        raise AssertionError(
+            "an interaction carrying both 'fingerprint' and a long-enough "
+            "'synthetic' served its recorded response with no fingerprint "
+            "check at all — a stray 'synthetic' field permanently disabled "
+            "drift detection on a genuine recording"
+        )
+
+
 def test_asking_for_more_calls_than_recorded_fails() -> None:
     """Covers the other direction: the code grew a call the recording lacks.
 

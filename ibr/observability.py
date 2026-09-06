@@ -48,32 +48,69 @@ def scrub(text: str) -> str:
     return text
 
 
+# The explicit bidirectional override/embedding/isolate controls — the
+# "Trojan Source" set. Deliberately not every Unicode "Cf" character: ZERO
+# WIDTH JOINER/NON-JOINER (U+200C/200D) are Cf too and are ordinary, load-
+# bearing punctuation in Persian, Arabic and several Indic scripts' ligatures,
+# and this project's own corpus celebrates exactly that range of languages —
+# escaping them would mangle real text rather than neutralise an attack. LRM
+# and RLM (U+200E/200F) are excluded for the same reason: they mark the
+# directionality of one character for context and cannot reorder the text
+# after them, unlike the controls below, which stay in effect until an
+# explicit pop or the end of the paragraph.
+_BIDI_CONTROL_TYPES = frozenset(
+    {"LRE", "RLE", "LRO", "RLO", "PDF", "LRI", "RLI", "FSI", "PDI"}
+)
+
+
+def _escape_one(char: str) -> str:
+    """One character's visible form: `repr()`'s own convention, not a new one."""
+    code = ord(char)
+    return f"\\x{code:02x}" if code <= 0xFF else f"\\u{code:04x}"
+
+
 def _escape_control_characters(text: str) -> str:
-    """Make a C0/C1 control character visible instead of letting it act.
+    """Make a character that can act on a reader visible instead, two ways.
 
     `str.split()` treats real whitespace (space, tab, newline, ...) as a
-    separator, so `summarize` already removes those. It does not touch ESC
-    (0x1b) or the other control characters that are not whitespace — an
-    issue titled `\\x1b[1A\\x1b[2K...` carries a terminal escape sequence
-    straight through `summarize` and into the JSON Lines log untouched, since
-    none of it is whitespace and none of it is the operator's API key.
-    `phase3_trace.py` then prints `input_summary` with no sanitisation of its
-    own, so the sequence executes in the operator's terminal: `\\x1b[1A\\x1b[2K`
-    moves the cursor up one line and erases it, letting issue text overwrite
-    the stage line printed immediately above with a forged one. §4 makes this
-    trace the artifact for seeing "what the content went through" — a title
-    is supposed to be inert data there, same as the body.
+    separator, so `summarize` already removes those. Two categories of
+    character survive it, and both were reachable through an issue title with
+    nothing between it and a raw `print()` in `phase3_trace.py`.
 
-    So every Unicode "Cc" character — including but not the same set as
-    whitespace — is turned into its escaped form (`\\x1b`, four visible
-    characters) rather than left able to act on whoever reads the summary.
+    **Terminal escapes.** ESC (0x1b) is not whitespace, so
+    `\\x1b[1A\\x1b[2K...` carries a cursor-control sequence straight through
+    `summarize` and into the JSON Lines log untouched. `phase3_trace.py`
+    prints `input_summary` with no sanitisation of its own, so the sequence
+    executes: `\\x1b[1A\\x1b[2K` moves the cursor up one line and erases it,
+    letting issue text overwrite the stage line printed immediately above with
+    a forged one. §4 makes this trace the artifact for seeing "what the
+    content went through" — a title is supposed to be inert data there, same
+    as the body.
+
+    **Bidi overrides.** The first version of this fix escaped only Unicode
+    category "Cc" and missed this entirely: U+202E RIGHT-TO-LEFT OVERRIDE is
+    category "Cf", not "Cc", so `summarize('safe start \\u202e evil reversed
+    text \\u202c end')` returned the override character verbatim — confirmed
+    by running it. On a bidi-aware terminal (which most are, now) the
+    *visual* order of the printed line becomes attacker-controlled: the same
+    "title is inert data" guarantee this function exists for, defeated by a
+    character class one category away from the one it checked. Escaped by
+    bidirectional type rather than by Unicode category, because the category
+    ("Cf") is too broad — it also contains ZERO WIDTH JOINER and NON-JOINER,
+    which are ordinary characters in several scripts this project's own
+    corpus uses (see `_BIDI_CONTROL_TYPES` for exactly which types are the
+    override/embedding/isolate controls and which are excluded on purpose).
+
     Elsewhere in this project the Reader's free text is logged through `!r`
     for the same reason; this is that same idea applied at the one place
     every stage's input and output summary already passes through, so a
     caller does not have to remember to do it themselves.
     """
     return "".join(
-        char if unicodedata.category(char) != "Cc" else f"\\x{ord(char):02x}"
+        char
+        if unicodedata.category(char) != "Cc"
+        and unicodedata.bidirectional(char) not in _BIDI_CONTROL_TYPES
+        else _escape_one(char)
         for char in text
     )
 

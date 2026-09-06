@@ -274,6 +274,40 @@ def test_summarize_neutralises_a_terminal_escape_sequence() -> None:
         assert summarize(ordinary) == ordinary
 
 
+def test_summarize_neutralises_a_bidi_override() -> None:
+    """The first version of this fix checked Unicode category "Cc" and missed
+    this entirely: U+202E RIGHT-TO-LEFT OVERRIDE is category "Cf", one step
+    away from the category actually checked.
+
+    On a bidi-aware terminal, an unescaped override changes the *visual*
+    order of everything up to the matching pop character — the same "a title
+    is inert data" guarantee `_escape_control_characters` exists for, on a
+    different mechanism than a cursor-control escape. Confirmed by running it
+    before this fix: the override character survived `summarize()` verbatim.
+    """
+    rlo, pdf = "‮", "‬"  # RIGHT-TO-LEFT OVERRIDE, POP DIRECTIONAL FORMATTING
+    payload = f"safe start {rlo}evil reversed text{pdf} end"
+    out = summarize(payload)
+    assert rlo not in out and pdf not in out, "a raw bidi override reached the summary"
+    assert "\\u202e" in out and "\\u202c" in out, (
+        f"expected the override escaped visibly, got {out!r}"
+    )
+    assert "safe start" in out and "evil reversed text" in out and "end" in out
+
+    # Legitimate uses of a *different* Cf character must survive. ZERO WIDTH
+    # JOINER/NON-JOINER are Cf, exactly like the override characters, but are
+    # ordinary ligature-forming punctuation in Persian, Arabic and several
+    # Indic scripts — not a reordering attack, and this project's own corpus
+    # covers those languages. Escaping every Cf character (rather than only
+    # the bidirectional-override/embedding/isolate types) would mangle this.
+    zwj, zwnj = "‍", "‌"
+    for legitimate in (f"a{zwj}b", f"a{zwnj}b"):
+        assert summarize(legitimate) == legitimate, (
+            f"a non-override Cf character was escaped: {legitimate!r} -> "
+            f"{summarize(legitimate)!r}"
+        )
+
+
 def test_a_titled_ansi_payload_does_not_survive_into_a_real_trace() -> None:
     """The exact reachable path: an issue title, through the real pipeline.
 

@@ -98,13 +98,24 @@ def _names_reserved_device(part: str) -> bool:
     can block forever, since nothing in this package puts a timeout on a local
     read).
 
-    So every spelling collapses to the same stem before comparison: strip
-    trailing spaces and dots (in either order — done together, since Windows
-    strips them as a combined run), then take the text before a colon, then
-    before a literal dot.
+    So every spelling collapses to the same stem before comparison — in this
+    order, which matters: take the text before the first colon, *then* strip
+    trailing spaces and dots from what remains, *then* take the text before a
+    literal dot.
+
+    The order was wrong for one release. Stripping trailing spaces/dots from
+    the whole component *before* splitting off the colon looks equivalent and
+    is not: for `"nul :"` the component's actual last character is `:`, so
+    that first `rstrip` is a no-op, and splitting on the colon afterward
+    yields the stem `"nul "` — trailing space still attached, and not a member
+    of `_WINDOWS_DEVICE_NAMES`. Verified against the real device: `"nul :"`
+    and `"com1 :"` both opened the device on this machine under the old order,
+    silently, with the guard reporting them as ordinary sandbox files.
+    Splitting on the colon first means a trailing space sitting *before* it is
+    still the component's true trailing character at that point, so it is the
+    thing the subsequent `rstrip` sees and removes.
     """
-    stripped = part.rstrip(" .")
-    stem = stripped.split(":", 1)[0].split(".")[0]
+    stem = part.split(":", 1)[0].rstrip(" .").split(".")[0]
     return stem.lower() in _WINDOWS_DEVICE_NAMES
 
 
