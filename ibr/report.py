@@ -236,14 +236,58 @@ def render_markdown(
     )
 
     if baseline_leaked and not isolated_leaked:
+        # Which layer actually stopped the ordinary malicious run — not
+        # assumed, read off that specific outcome. Two other rows genuinely
+        # reach isolated+malicious (the bypassed run and the deterministic
+        # worst-case), so this is the one scenario key that means "the audit
+        # ran normally, unbypassed" rather than the isolated architecture in
+        # general.
+        ordinary_malicious = next(
+            (o for o in outcomes if o.scenario.key == "isolated_malicious"), None
+        )
+        short_circuited = bool(
+            ordinary_malicious
+            and "short_circuit" in ordinary_malicious.stages
+            and ordinary_malicious.audit_completed
+        )
         parts.append(
             "The baseline leaked and the isolated pipeline did not — but the "
             "interesting part is *which layer* stopped it.\n\n"
-            "In the ordinary malicious run, the **security audit** caught the "
-            "injection and short-circuited. That layer is probabilistic: it is "
-            "cheap, it stops unsophisticated attacks, and a good enough attack "
-            "gets past it. If that were the only defense, the system would be "
-            "one clever rephrasing away from the baseline's outcome.\n\n"
+        )
+        if short_circuited:
+            parts.append(
+                "In this run, the **security audit** caught the injection and "
+                "short-circuited. That layer is probabilistic: it is cheap, it "
+                "stops unsophisticated attacks, and a good enough attack gets "
+                "past it. If that were the only defense, the system would be "
+                "one clever rephrasing away from the baseline's outcome.\n\n"
+            )
+        elif ordinary_malicious and not ordinary_malicious.audit_completed:
+            parts.append(
+                "In this run the **security audit call itself failed** — a "
+                f"timeout or connection error (`{ordinary_malicious.risk_level}`)"
+                " — and the pipeline failed closed to `no_action` without the "
+                "Reader or Executor ever running. That is not the audit "
+                "detecting anything; it is PROJECT_SPEC.md §1.4's fail-closed "
+                "rule doing its job on a check that never completed. The "
+                "probabilistic layer did not stop this run — a network error "
+                "did, which is a different claim and a weaker one to lean on.\n\n"
+            )
+        else:
+            note = (
+                f" (`{ordinary_malicious.risk_level}`)" if ordinary_malicious else ""
+            )
+            parts.append(
+                f"In this run the security audit did **not** short-circuit{note}"
+                " — per PROJECT_SPEC.md §3.1, only `high_risk` does; `suspicious` "
+                "passes through with a review flag. The Reader ran and the "
+                "**structured boundary** is what actually contained it: the "
+                "Reader's free text never reaches the Executor, which reads "
+                "two enum fields and selects a static template. This run is "
+                "already the case the paragraph below argues for, not the one "
+                "the probabilistic layer gets credit for.\n\n"
+            )
+        parts.append(
             "The bypassed-audit and fully-captured-Reader rows are there to "
             "show what remains once the probabilistic layer is gone. The Reader "
             "can be persuaded to write anything at all into `reasoning` and "

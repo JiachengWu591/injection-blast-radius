@@ -828,7 +828,7 @@ def test_comparison_refuses_to_credit_a_model_the_data_cannot_separate() -> None
     markdown = render_comparison_markdown(comparison)
     assert "does not distinguish the two models" in markdown
     assert "consistent with the rates being equal" in markdown
-    assert "samples per\nmodel" in markdown or "samples per model" in markdown
+    assert "audit calls per\nmodel" in markdown or "audit calls per model" in markdown
     assert "not evidence that the newer model is safer" in markdown
     assert "significantly better" not in markdown, (
         "the report credited a model on data that cannot separate them"
@@ -911,21 +911,62 @@ def test_comparison_derives_counts_from_the_corpus() -> None:
 
 
 def test_comparison_reports_the_call_count_it_actually_needs() -> None:
-    """The required-sample figure must scale with the corpus, not a literal."""
+    """`needed` is already a count of malicious audit calls — do not multiply.
+
+    `required_samples_per_group` returns n in the unit of the trials the two
+    rates were computed from, and `fn_rate` pools over the MALICIOUS subjects
+    only (`ModelResult.false_negatives` -> `CorpusVariance.pooled(malicious)`).
+    So `needed` is already "this many malicious audit calls, total, per
+    model" — not a per-subject figure waiting to be multiplied up.
+
+    The previous version of this test asserted
+    `f"{needed * subject_count:,}" in markdown`: it recomputed the code's own
+    (wrong) arithmetic and confirmed the code agreed with itself, so it
+    passed on a headline inflated ~8x at 7 malicious subjects and ~13x on
+    today's 12-pattern corpus, while being named for pinning "the call count
+    it actually needs." Multiplying by `len(comparison.models[0].corpus.
+    subjects)` compounded this further: that count includes the one benign
+    control subject, which contributes nothing to `fn_rate` at all.
+
+    Checked here against the formula's own unit instead: the reported number
+    must be `needed` itself, unmultiplied, and the per-subject figure (if
+    shown) must be `needed` divided by the malicious subject count — the
+    opposite operation from what shipped.
+    """
     comparison = Comparison(
         models=[_model_result("weaker", misses=1), _model_result("stronger", misses=0)],
         samples_requested=25,
     )
+    malicious_n = len(comparison.models[0].corpus.malicious)
     subject_count = len(comparison.models[0].corpus.subjects)
-    markdown = render_comparison_markdown(comparison)
+    assert malicious_n == subject_count - 1, (
+        "the fixture's benign control went missing; this test needs both "
+        "counts to differ to catch the two being confused"
+    )
 
     a_x, a_n = comparison.models[0].false_negatives
     b_x, b_n = comparison.models[1].false_negatives
     needed = required_samples_per_group(a_x / a_n, b_x / b_n)
     assert needed is not None
-    assert f"{needed * subject_count:,}" in markdown, (
-        "the reported call count does not match samples x subjects"
+
+    markdown = render_comparison_markdown(comparison)
+    assert f"{needed:,} malicious audit calls per model" in markdown, (
+        f"expected the unmultiplied call count {needed:,} in the headline"
     )
+    inflated = needed * subject_count
+    assert f"{inflated:,}" not in markdown, (
+        f"the old (needed x every subject, including the benign control) "
+        f"figure {inflated:,} is back in the report"
+    )
+    per_subject = round(needed / malicious_n)
+    assert f"{per_subject:,}" in markdown, (
+        "the per-malicious-subject breakdown does not match needed / "
+        "malicious_n — dividing, not multiplying, is the fix"
+    )
+
+    terminal = render_comparison_terminal(comparison)
+    assert f"{needed:,} malicious audit calls per model" in terminal
+    assert f"{inflated:,}" not in terminal
 
 
 def test_comparison_per_subject_table_covers_every_model() -> None:

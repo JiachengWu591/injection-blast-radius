@@ -176,12 +176,6 @@ def render_terminal(comparison: Comparison) -> str:
 def _render_pairwise_terminal(comparison: Comparison) -> str:
     lines: list[str] = []
     base = comparison.models[0]
-    # Derived, not hardcoded: this multiplier was written as a literal 8 when
-    # the corpus had seven techniques, and silently understated the required
-    # call count by a third once five more were added. It feeds the headline
-    # "you would need N calls to tell these models apart", so a stale constant
-    # here quietly weakens the one number the comparison exists to produce.
-    subject_count = len(base.corpus.subjects)
     for other in comparison.models[1:]:
         a_x, a_n = base.false_negatives
         b_x, b_n = other.false_negatives
@@ -205,14 +199,26 @@ def _render_pairwise_terminal(comparison: Comparison) -> str:
                     "would separate them."
                 )
             else:
+                # `needed` is already a count of malicious audit calls: the
+                # rates fed to `required_samples_per_group` are pooled over
+                # `base.corpus.malicious`, and a two-proportion sample-size
+                # formula returns n in the unit of the trials it was given.
+                # This used to be multiplied by `len(base.corpus.subjects)` —
+                # every subject, including the one benign control that
+                # contributes nothing to fn_rate — which re-applied the
+                # corpus size to a number that already accounted for it,
+                # inflating the headline by the subject count (~13x on the
+                # current corpus). See tests/test_variance.py for the
+                # reproduction against this project's own recorded run.
+                malicious_n = len(base.corpus.malicious)
                 lines.append(
                     f"  Resolving a difference this size at 80% power would "
-                    f"take roughly {needed:,} samples per model"
+                    f"take roughly {needed:,} malicious audit calls per model"
                 )
                 lines.append(
-                    f"  ({needed * subject_count:,} audit calls each across "
-                    f"{subject_count} subjects, versus the "
-                    f"{a_n + base.false_positives[1]} run here)."
+                    f"  (~{needed / malicious_n:,.0f} per malicious subject "
+                    f"across {malicious_n}, versus the {a_n} malicious calls "
+                    "this run made)."
                 )
         else:
             better = other.model if difference > 0 else base.model
@@ -295,16 +301,25 @@ def render_markdown(comparison: Comparison) -> str:
                         "size would separate them here.\n"
                     )
                 else:
+                    # `needed` is already a count of malicious audit calls —
+                    # the rates it was computed from are pooled over
+                    # `base.corpus.malicious` — so multiplying by the full
+                    # subject count (including the one benign control, which
+                    # contributes nothing to fn_rate) re-applied the corpus
+                    # size to a number that already accounted for it. See the
+                    # terminal renderer above for the same fix and why.
+                    malicious_n = len(base.corpus.malicious)
                     parts.append(
                         f"Resolving a difference of the observed size at 80% "
-                        f"power would take roughly **{needed:,} samples per "
-                        f"model** — about "
-                        f"{needed * len(base.corpus.subjects):,} audit calls each, "
-                        f"against the {a_n + base.false_positives[1]} this run "
-                        "made. That is the useful finding: at sample sizes a "
-                        "small project can afford, *a clean run on a newer "
-                        "model is not evidence that the newer model is safer.* "
-                        "The experiment could not have shown otherwise.\n"
+                        f"power would take roughly **{needed:,} malicious "
+                        f"audit calls per model** — about "
+                        f"{needed / malicious_n:,.0f} per malicious subject "
+                        f"across {malicious_n}, against the {a_n} malicious "
+                        "calls this run made. That is the useful finding: at "
+                        "sample sizes a small project can afford, *a clean "
+                        "run on a newer model is not evidence that the newer "
+                        "model is safer.* The experiment could not have shown "
+                        "otherwise.\n"
                     )
             else:
                 better = other.model if difference > 0 else base.model

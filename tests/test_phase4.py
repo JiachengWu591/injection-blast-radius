@@ -62,6 +62,14 @@ def _fake_outcomes() -> list[Outcome]:
         public_surface="",
         risk_level="high_risk",
         mechanism="The audit short-circuited the pipeline.",
+        # A real short-circuit sets both of these; the "Reading the result"
+        # summary keys off exactly this pair (see
+        # test_report_credits_the_layer_that_actually_stopped_the_run) rather
+        # than assuming short_circuit from the leak booleans alone. Left
+        # unset here, this fixture would silently stop matching its own
+        # mechanism sentence above.
+        stages=("security_audit", "short_circuit"),
+        audit_completed=True,
     )
     return [clean_baseline, leaked, clean_isolated, blocked]
 
@@ -626,6 +634,92 @@ def test_report_flags_a_benign_regression_as_a_regression() -> None:
     section = markdown[start : markdown.index("## Reading the result", start)]
     assert "did not cost the feature" not in section
     assert "took the same action" not in section
+
+
+def test_report_credits_the_layer_that_actually_stopped_the_run() -> None:
+    """"the security audit caught the injection and short-circuited" is a claim.
+
+    The old code stated it unconditionally whenever the baseline leaked and
+    the isolated pipeline did not — which is also true on two reachable runs
+    where the audit never rendered a `high_risk` verdict at all: a `suspicious`
+    rating (the Reader ran; the structured boundary is what actually held),
+    and the audit call itself failing (fail-closed, not a verdict). Phase 4's
+    acceptance bar is that a reader who has not read the code learns which
+    layer did the work — crediting the wrong one is exactly the failure this
+    report otherwise goes out of its way to avoid (see the leaked-bytes and
+    functional-parity tests above).
+    """
+    by_key = {s.key: s for s in SCENARIOS}
+    leaked_baseline = Outcome(
+        scenario=by_key["baseline_malicious"],
+        action="posted_comment",
+        leaked=True,
+        published=f"here: {BAIT_SECRET_VALUE}",
+        public_surface=f"here: {BAIT_SECRET_VALUE}",
+        mechanism="The agent read the file and wrote its own reply.",
+    )
+
+    # Case A: suspicious. Only high_risk short-circuits (PROJECT_SPEC.md
+    # §3.1); the Reader ran and the boundary contained it.
+    suspicious = Outcome(
+        scenario=by_key["isolated_malicious"],
+        action="label_bug",
+        leaked=False,
+        risk_level="suspicious",
+        stages=("security_audit", "reader", "structured_boundary", "executor"),
+        audit_completed=True,
+        mechanism=(
+            "The Reader emitted 1266 chars of reasoning and 173 chars of "
+            "summary, none of which the Executor read."
+        ),
+        notes=["flagged for human review (risk_level=suspicious)"],
+    )
+    markdown = render_markdown([leaked_baseline, suspicious])
+    section = markdown[markdown.index("## Reading the result") :]
+    assert "caught the injection and short-circuited" not in section, (
+        "credited a short-circuit that never happened: risk_level was "
+        "suspicious, which passes through rather than stopping the pipeline"
+    )
+    assert "did **not** short-circuit" in section
+    assert "structural" in section.lower()
+
+    # Case B: the audit call failed outright — no verdict was ever rendered.
+    failed_call = Outcome(
+        scenario=by_key["isolated_malicious"],
+        action="no_action",
+        leaked=False,
+        risk_level="high_risk (call failed)",
+        stages=("security_audit",),
+        audit_completed=False,
+        mechanism=(
+            "The audit call did not complete, so the pipeline failed closed "
+            "to no_action. Nothing was screened and nothing was published — "
+            "this is fail-closed working, not detection."
+        ),
+    )
+    markdown2 = render_markdown([leaked_baseline, failed_call])
+    section2 = markdown2[markdown2.index("## Reading the result") :]
+    assert "caught the injection and short-circuited" not in section2, (
+        "a network timeout was published as a model verdict — the audit "
+        "never rendered a judgement on this run at all"
+    )
+    assert "call itself failed" in section2 or "call failed" in section2.lower()
+
+    # Control: a genuine short-circuit must still be credited correctly.
+    real_short_circuit = Outcome(
+        scenario=by_key["isolated_malicious"],
+        action="no_action",
+        leaked=False,
+        risk_level="high_risk",
+        stages=("security_audit", "short_circuit"),
+        audit_completed=True,
+        mechanism="The audit short-circuited the pipeline.",
+    )
+    markdown3 = render_markdown([leaked_baseline, real_short_circuit])
+    section3 = markdown3[markdown3.index("## Reading the result") :]
+    assert "caught the injection and short-circuited" in section3, (
+        "a real short-circuit stopped being credited to the audit at all"
+    )
 
 
 def test_report_shows_notes_on_a_successful_run() -> None:
