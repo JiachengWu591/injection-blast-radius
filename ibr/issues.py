@@ -31,7 +31,18 @@ _REQUIRED_FIELDS = ("issue_id", "title", "author", "body")
 # builds the frozen dataclass directly and never sees the parser — and a rule
 # only one of three construction paths enforces is not a structural rule. None
 # of the 525 shipped corpus ids or any test id falls outside this class.
-_ISSUE_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+#
+# `\Z`, not `$`. Python's `$` matches at the end of the string *or just before
+# a trailing newline* — with no `re.MULTILINE` flag, so this is easy to miss —
+# so the first version of this pattern accepted `"4821\n"` and 65 characters of
+# `"a" * 64 + "\n"`, one past the documented {1,64} bound. JSON strings carry
+# newlines through unescaped, so `parse_issue('{"issue_id": "4821\\n", ...}')`
+# constructs one: a single physical line becomes an `Issue` whose id, once
+# interpolated with nothing between it and the file, splits
+# `sandbox/labels.txt` and `sandbox/public_comments.txt` into two lines each —
+# on the label path, which the output audit never sees at all. `\Z` anchors at
+# the true end and admits no exception.
+_ISSUE_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}\Z")
 
 
 class MalformedIssue(RuntimeError):

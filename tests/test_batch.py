@@ -20,6 +20,7 @@ Run standalone:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any, cast
@@ -129,6 +130,14 @@ def test_a_ledger_with_no_file_yet_is_empty_not_broken() -> None:
     ledger = ActionLedger(path=missing)
     assert ledger.state() == {}
     assert ledger.check(ActionKey.of("label", "1", "bug")) == "fresh"
+
+    # The first-ever write on a ledger with no file yet: the heal check ahead
+    # of `_append` must see "nothing to heal" and get out of the way, not
+    # treat a nonexistent file as something to repair.
+    key = ActionKey.of("label", "1", "bug")
+    ledger.intend(key)
+    ledger.done(key)
+    assert ledger.check(key) == "done"
 
 
 def test_a_blank_line_in_the_ledger_is_skipped() -> None:
@@ -274,6 +283,73 @@ def test_the_ledger_tolerates_a_torn_last_line_only() -> None:
         assert "cannot be repaired by inference" in str(exc)
     else:
         raise AssertionError("a corrupted middle line was tolerated")
+
+
+def test_a_torn_line_heals_on_the_next_append_instead_of_bricking() -> None:
+    """The operator's documented remedy must not be the thing that bricks it.
+
+    `check()` tells an operator with a dangling intent to call `confirm()` or
+    `discard()`. Before `_append` healed the tail first, doing exactly that
+    glued the operator's own write onto the torn fragment left by a crash mid-
+    append, producing one fully-terminated, permanently unparsable line — so
+    every future `state()` and `check()`, for every key, raised
+    `DanglingIntent` forever. Reproduced here rather than inferred: this test
+    fails on the pre-fix `_append` (it hangs at the `ledger.check(stuck)`
+    after `confirm`, raising `DanglingIntent` where "done" was expected).
+    """
+    ledger = _fresh_ledger()
+    stuck = ActionKey.of("comment", "77", "hello")
+    ledger.intend(stuck)
+    # A crash mid-append of the `done` line: an unterminated fragment sits
+    # right after the complete `intent` line, exactly what `IdempotentSink`
+    # would leave if the process died between the inner call and `done()`.
+    sandbox_fs.append_text(LEDGER, '{"key": "comment:77:' + stuck.digest[:4])
+
+    try:
+        ledger.check(stuck)
+    except DanglingIntent:
+        pass
+    else:
+        raise AssertionError("a torn done-line was not reported as dangling")
+
+    # The operator looks at the destination, confirms it landed, and the
+    # ledger's own documented remedy runs.
+    ledger.confirm(stuck)
+
+    assert ledger.check(stuck) == "done", (
+        "confirm() did not register — the torn fragment was likely glued to "
+        "the new record instead of being stripped first, which is what makes "
+        "every future state() raise DanglingIntent from here on"
+    )
+
+    # And an unrelated action afterward must work normally — one crash must
+    # not brick the whole file for every key that comes after it.
+    other = ActionKey.of("label", "78", "bug")
+    ledger.intend(other)
+    ledger.done(other)
+    assert ledger.check(other) == "done"
+
+
+def test_a_fragment_that_is_actually_complete_json_is_not_discarded() -> None:
+    """Only lost bytes are torn. A complete record missing its newline is not.
+
+    The heal must not throw away a genuinely complete line just because the
+    trailing newline byte itself was lost — `_lines()` already parses that
+    case fine, since `json.loads` does not care whether a trailing newline is
+    present.
+    """
+    ledger = _fresh_ledger()
+    key = ActionKey.of("label", "79", "bug")
+    payload = json.dumps({"key": str(key), "phase": "done", "ts": "t"})
+    sandbox_fs.write_text(LEDGER, payload)  # complete JSON, no trailing "\n"
+
+    other = ActionKey.of("label", "80", "bug")
+    ledger.intend(other)  # triggers the heal check before this append
+
+    assert ledger.check(key) == "done", (
+        "a complete record was discarded merely for lacking a trailing "
+        "newline byte, which _lines() would have parsed correctly on its own"
+    )
 
 
 def test_the_intent_is_on_disk_before_the_inner_sink_runs() -> None:

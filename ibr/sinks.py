@@ -226,7 +226,59 @@ class ActionLedger:
                 latest[key] = phase
         return latest
 
+    def _heal_torn_tail(self) -> None:
+        """Terminate an unterminated last line before writing, one way or another.
+
+        `_lines()` accepts an unterminated, unparsable last line as a crash
+        mid-append and skips it on read — the whole point of the class. But
+        `sandbox_fs.append_text` opens in append mode and writes at EOF with
+        no terminator of its own, so the *next* write, whatever it is, lands
+        glued onto that fragment instead of starting a fresh line. Once that
+        happens the merged line is fully terminated and permanently
+        unparsable, and `_lines()` no longer tolerates it: every future
+        `state()` and `check()`, for every key, raises `DanglingIntent`. That
+        next write is usually the operator's own remedy — `check()` tells
+        them to call `confirm()` or `discard()` — so the documented fix for a
+        dangling intent was the thing that bricked the ledger. Verified by
+        reproducing the crash, the resume, and the brick before this existed.
+
+        Two cases, told apart by whether the trailing fragment actually
+        parses. Genuinely torn — discard it, before any write. Safe to: it
+        never finished, so it carries no information `_lines()` could already
+        recover, and the state it would have recorded is exactly the decision
+        this call is about to make explicitly (`intend`, `done`, `confirm`, or
+        `discard`). Complete but merely missing its trailing byte — keep it
+        and just add the newline; discarding a finished record because of one
+        lost byte would be a second way to lose data, not a fix for the first.
+        Either way, the file ends in a newline before the new record is
+        written, which is the invariant `append_text` depends on to never
+        merge two records into one line.
+        """
+        if not sandbox_fs.exists(self.path):
+            return
+        text = sandbox_fs.read_text(self.path)
+        if not text or text.endswith("\n"):
+            return  # nothing pending, or already terminated
+        head, _, tail = text.rpartition("\n")
+        try:
+            json.loads(tail)
+        except json.JSONDecodeError:
+            # Genuinely torn: discard the fragment. `append_text` opens at
+            # EOF with no separator of its own, so leaving it in place would
+            # corrupt the *next* write either way — glued onto a fragment
+            # that will never parse, or (see below) onto a complete record
+            # that would then read as one malformed line instead of two
+            # valid ones.
+            sandbox_fs.write_text(self.path, f"{head}\n" if head else "")
+        else:
+            # Complete record — only the trailing newline byte was lost, and
+            # `_lines()` already parses that fine on its own. Nothing to
+            # discard, but the next append still needs a separator, or it
+            # would glue onto this line and corrupt it too.
+            sandbox_fs.write_text(self.path, f"{text}\n")
+
     def _append(self, key: ActionKey, phase: str) -> None:
+        self._heal_torn_tail()
         sandbox_fs.append_text(
             self.path,
             json.dumps(

@@ -94,16 +94,24 @@ def _text_response(text: str) -> dict:
     }
 
 
-MIN_REASON = 40
+# The threshold, and its enforcement, live in tests/replay.py now — not here.
+# This module's own claim used to be "there is no way to build a synthetic
+# interaction that skips it", which was true of every interaction built
+# through this one function and false of a committed
+# tests/cassettes/*.json file, which never calls it. Importing the same
+# constant rather than restating it means a change to the real threshold
+# cannot leave this helper checking a different number than the one that
+# actually matters at replay time.
+MIN_REASON = replay.MIN_SYNTHETIC_REASON
 
 
 def _synthetic(reason: str, response: dict) -> dict:
     """Build a constructed interaction, refusing a reason too thin to review.
 
-    Enforced here rather than by a separate audit: a registry of scenarios to
-    check would have to be maintained alongside the tests and would drift from
-    them. Checking at construction cannot drift, because there is no way to
-    build a synthetic interaction that skips it.
+    A first line of defence, not the enforcement: `tests/replay.py` checks
+    this again at the point every interaction is actually consumed, which is
+    what closes the path this function cannot — a reason committed straight
+    into a cassette file, never passing through here at all.
     """
     if len(reason) < MIN_REASON:
         raise AssertionError(

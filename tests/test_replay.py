@@ -110,6 +110,68 @@ def test_a_changed_request_fails_instead_of_passing_stale() -> None:
         raise AssertionError("a mismatched request replayed successfully")
 
 
+def test_a_thin_synthetic_reason_cannot_switch_off_the_fingerprint_check() -> None:
+    """The escape hatch, attacked the way a committed cassette actually could be.
+
+    `_synthetic()` in tests/test_failure_paths.py refuses a reason under 40
+    characters, but that check only ever ran when an interaction was built
+    through that one Python function — a `tests/cassettes/*.json` file never
+    goes through it: `replay.load()` reads the JSON with no validation at all.
+    So `{"synthetic": ""}` inside a committed cassette used to disable that
+    interaction's fingerprint check permanently, and every one of the other
+    ~250 offline assertions stayed green while it happened.
+
+    Built here exactly as `replay.load()` would hand it to `ReplayClient` —
+    a bare dict from a JSON-shaped source, never touching `_synthetic()` —
+    because that is the gap: the enforcement has to live at the point every
+    interaction is consumed, not at the one construction path that happens to
+    have a helper function.
+    """
+    for thin in ("", "x", "not quite forty characters of reason"):
+        client = replay.from_interactions(
+            [{"synthetic": thin, "response": {"model": "m", "choices": [], "usage": None}}],
+            name="thin-synthetic",
+        )
+        try:
+            client.chat.completions.create(
+                model="anything", messages=[{"role": "user", "content": "whatever"}]
+            )
+        except replay.CassetteMismatch as exc:
+            assert "synthetic" in str(exc).lower()
+        else:
+            raise AssertionError(
+                f"a {thin!r} synthetic reason skipped the fingerprint check "
+                f"({len(thin)} characters, under {replay.MIN_SYNTHETIC_REASON})"
+            )
+
+    # A non-string value must fail the same way rather than crashing on len().
+    client = replay.from_interactions(
+        [{"synthetic": None, "response": {"model": "m", "choices": [], "usage": None}}],
+        name="null-synthetic",
+    )
+    try:
+        client.chat.completions.create(model="x", messages=[])
+    except replay.CassetteMismatch:
+        pass
+    else:
+        raise AssertionError("synthetic=None was accepted instead of refused")
+
+    # A reason at or over the threshold is unaffected — the escape hatch
+    # still works for what it exists for.
+    long_enough = "x" * replay.MIN_SYNTHETIC_REASON
+    client = replay.from_interactions(
+        [
+            {
+                "synthetic": long_enough,
+                "response": {"model": "m", "choices": [], "usage": None},
+            }
+        ],
+        name="real-synthetic",
+    )
+    client.chat.completions.create(model="anything", messages=[])
+    client.assert_fully_consumed()
+
+
 def test_asking_for_more_calls_than_recorded_fails() -> None:
     """Covers the other direction: the code grew a call the recording lacks.
 

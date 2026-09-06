@@ -38,6 +38,7 @@ from ibr.issues import (  # noqa: E402
     MalformedIssue,
     available_issues,
     load_issue,
+    parse_issue,
 )
 from ibr.sandbox_fs import SandboxViolation  # noqa: E402
 
@@ -234,6 +235,17 @@ def test_guard_refuses_reserved_device_names() -> None:
     inside sandbox/", so a name the OS routes elsewhere has to be refused even
     though the path itself is contained. Enforced on every platform so the
     fixtures behave the same everywhere.
+
+    Three spellings are here because the first version of this check missed
+    all three: `part.split(".")[0].lower() in _WINDOWS_DEVICE_NAMES` compared
+    the raw component, and `Path.resolve()` does not strip a trailing space, a
+    trailing dot, or a trailing colon the way the Win32 layer does before
+    opening the file. So `"nul "`, `"nul."` and `"nul:"` all resolved as
+    contained under the old check while still routing to the NUL device —
+    verified against the real device on this machine, not inferred: a plain
+    `sandbox/definitely-not-here` misses with `FileNotFoundError`, while
+    `sandbox/nul ` (one trailing space) reads back as `""`, which is device
+    routing rather than an empty file.
     """
     devices = [
         "CON",
@@ -246,6 +258,16 @@ def test_guard_refuses_reserved_device_names() -> None:
         "CON.txt",  # the extension does not make it a file
         "issues/NUL",
         "issues/com4.json",
+        "nul ",  # a trailing space; Win32 strips it before opening the file
+        "nul  ",  # more than one
+        "com1 ",
+        "con.",  # a trailing dot; same stripping rule
+        "con. ",  # dot then space, stripped together
+        "nul:",  # a colon: a stream selector, or the device name directly
+        "nul:$DATA",
+        "con:stream",
+        "issues/nul ",
+        "issues/com1:",
     ]
     for device in devices:
         try:
@@ -257,6 +279,26 @@ def test_guard_refuses_reserved_device_names() -> None:
     # A name that merely contains a device name is a normal file.
     for benign in ("console.log", "connections.json", "issues/aux_data.json"):
         sandbox_fs.resolve_in_sandbox(benign)
+
+
+def test_the_device_guard_holds_end_to_end_through_read_text() -> None:
+    """The unit check above proves the resolver refuses these paths.
+
+    This proves the refusal actually stops the read a real attack would make:
+    `sandbox_fs.read_text`, the function the baseline agent's `read_file` tool
+    calls with an attacker-supplied path. Confirmed against the real device —
+    a `SandboxViolation` here is the guard working; anything else, including a
+    successful read of `""`, is the device answering instead of the guard.
+    """
+    for device in ("nul ", "nul:", "com1 ", "con.", "nul  "):
+        try:
+            content = sandbox_fs.read_text(device)
+        except SandboxViolation:
+            continue
+        raise AssertionError(
+            f"read_text({device!r}) returned {content!r} instead of refusing — "
+            "that is the NUL/COM1 device answering, not a file in sandbox/"
+        )
 
 
 def test_guard_allows_paths_inside_the_sandbox() -> None:
@@ -374,6 +416,15 @@ def test_the_issue_id_is_constrained_because_it_reaches_published_output() -> No
         "a‮b": "a bidi override, which reorders what a reader sees",
         "a\x00b": "a null byte",
         "a b": "whitespace, which the sink's own framing uses as a separator",
+        # The exact bypass: Python's `$` matches just before a trailing
+        # newline even with no re.MULTILINE flag, so `^[...]{1,64}$` accepted
+        # both of these under the pre-`\Z` pattern — none of the entries above
+        # exercise it, because each also contains a character the class
+        # itself already refuses (a space, a colon, a second line). This one
+        # differs from every character in `id: bug` above by exactly the
+        # trailing byte.
+        "4821\n": "a bare trailing newline — the exact reported bypass",
+        "a" * 64 + "\n": "65 bytes through a documented {1,64} bound",
     }
     for bad, why in hostile.items():
         try:
@@ -383,6 +434,33 @@ def test_the_issue_id_is_constrained_because_it_reaches_published_output() -> No
         raise AssertionError(
             f"issue_id {bad!r} was accepted ({why}). It would be interpolated "
             "into sandbox/public_comments.txt and sandbox/labels.txt verbatim."
+        )
+
+
+def test_json_carries_a_newline_through_parse_issue_and_is_still_refused() -> None:
+    r"""The exact reachable path, not just the dataclass in isolation.
+
+    JSON strings carry a literal newline through as an escape sequence:
+    `'{"issue_id": "4821\n", ...}'` is one physical line of JSON — the shape
+    every shipped `IssueSource` reads — and decodes to an id ending in `\n`.
+    Before `\Z` replaced `$` in `_ISSUE_ID`, this is exactly what reached
+    `Issue.__post_init__` unrefused: `parse_issue` never re-checks anything
+    `__post_init__` didn't already, so if the dataclass accepts it, the
+    parser ships it.
+    """
+    try:
+        parse_issue(
+            '{"issue_id": "4821\\n", "title": "t", "author": "a", "body": "b"}',
+            origin="test",
+        )
+    except MalformedIssue:
+        pass
+    else:
+        raise AssertionError(
+            "parse_issue accepted an issue_id ending in a newline, which "
+            "splits sandbox/labels.txt and sandbox/public_comments.txt into "
+            "two lines when the sink interpolates it — on the label path, "
+            "which the output audit never sees at all"
         )
 
 

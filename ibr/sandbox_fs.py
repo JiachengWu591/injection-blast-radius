@@ -74,12 +74,38 @@ def resolve_in_sandbox(path: str | Path) -> Path:
     # Containment is necessary but not sufficient — see _WINDOWS_DEVICE_NAMES.
     # The stem is what matters: CON.txt is the console device too.
     for part in resolved.relative_to(root).parts:
-        if part.split(".")[0].lower() in _WINDOWS_DEVICE_NAMES:
+        if _names_reserved_device(part):
             raise SandboxViolation(
                 f"refusing to touch {path!r}: {part!r} names a reserved device, "
                 "which the OS routes away from the sandbox directory"
             )
     return resolved
+
+
+def _names_reserved_device(part: str) -> bool:
+    """Does this path component name a Windows device, under any spelling?
+
+    `part.split(".")[0].lower() in _WINDOWS_DEVICE_NAMES` was the whole check
+    for a while, and it missed two spellings Windows treats identically to the
+    plain name: a trailing space or dot (`"nul "`, `"con."` — the Win32 layer
+    strips both before the name ever reaches the filesystem), and a trailing
+    colon (`"nul:"` — a colon starts a stream selector, or, for a DOS device
+    name, is accepted directly; either way the device opened is the same one).
+    `Path.resolve()` does not strip any of these, so a component that reads as
+    contained can still route to a device once the OS opens it — one attacker-
+    supplied `read_file` argument away, through the baseline's tool call, and
+    unbounded (`nul` returns instantly; `com1` on a machine with a serial port
+    can block forever, since nothing in this package puts a timeout on a local
+    read).
+
+    So every spelling collapses to the same stem before comparison: strip
+    trailing spaces and dots (in either order — done together, since Windows
+    strips them as a combined run), then take the text before a colon, then
+    before a literal dot.
+    """
+    stripped = part.rstrip(" .")
+    stem = stripped.split(":", 1)[0].split(".")[0]
+    return stem.lower() in _WINDOWS_DEVICE_NAMES
 
 
 def ensure_dir(path: str | Path) -> Path:

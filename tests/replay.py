@@ -33,6 +33,20 @@ from typing import Any, cast
 
 CASSETTE_DIR = Path(__file__).resolve().parent / "cassettes"
 
+# How long a `"synthetic"` reason must be before the fingerprint check is
+# skipped for it. Defined here, not in tests/test_failure_paths.py, because
+# here is the only place enforcement actually stops something: that file's
+# `_synthetic()` helper checked this at *construction* time and its own
+# comment claimed "there is no way to build a synthetic interaction that
+# skips it" — true of every interaction built through that one function, and
+# false of every interaction sitting in a committed `tests/cassettes/*.json`
+# file, which `load()` reads with no validation at all. `{"synthetic": ""}`
+# in a cassette permanently disabled that interaction's fingerprint check,
+# and nothing enforced the length on that path because nothing was enforced
+# on that path. Moved to the point every interaction is actually consumed,
+# regardless of how it was built or where it came from.
+MIN_SYNTHETIC_REASON = 40
+
 
 class CassetteMismatch(AssertionError):
     """The request differs from what was recorded. Re-record, do not loosen."""
@@ -161,7 +175,26 @@ class ReplayClient:
         if raises:
             raise _exception_named(raises)
 
-        if "synthetic" not in interaction:
+        if "synthetic" in interaction:
+            # Enforced here, at the point every interaction is actually
+            # consumed — not only at construction in `_synthetic()`, which a
+            # committed `tests/cassettes/*.json` file never goes through.
+            # `{"synthetic": ""}` in a cassette used to disable this
+            # interaction's fingerprint check permanently and silently; this
+            # is the one place that reaches every interaction regardless of
+            # where it came from.
+            reason = interaction.get("synthetic")
+            if not isinstance(reason, str) or len(reason) < MIN_SYNTHETIC_REASON:
+                raise CassetteMismatch(
+                    f"cassette {self._name!r} interaction {self.index}: "
+                    f"'synthetic' must be a string of at least "
+                    f"{MIN_SYNTHETIC_REASON} characters saying why this could "
+                    f"not be recorded; got {reason!r}. A synthetic interaction "
+                    "skips the fingerprint check entirely, so a reason this "
+                    "thin — or missing, or non-string — is how an inconvenient "
+                    "mismatch gets silenced instead of explained."
+                )
+        else:
             actual = fingerprint(kwargs)
             expected = interaction["fingerprint"]
             if actual != expected:
