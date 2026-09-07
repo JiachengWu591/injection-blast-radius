@@ -603,6 +603,45 @@ def test_missing_api_key_raises_instead_of_degrading() -> None:
             os.environ[API_KEY_ENV_VAR] = saved
 
 
+def test_missing_api_key_message_distinguishes_absent_from_blank() -> None:
+    """The message text must match which real state produced it.
+
+    An operator debugging a refusal reads the message to decide where to
+    look. "is not set" is only true when the var is truly absent from
+    `os.environ`; when it is present but blank/whitespace-only, the message
+    must say that instead, or the operator concludes they forgot to export
+    anything when they actually exported an unusable value.
+    """
+    saved = os.environ.get(API_KEY_ENV_VAR)
+    try:
+        os.environ.pop(API_KEY_ENV_VAR, None)
+        try:
+            assert_api_key_present()
+        except MissingApiKey as exc:
+            assert "is not set" in str(exc), (
+                f"the key is truly absent but the message doesn't say so: {exc!r}"
+            )
+        else:
+            raise AssertionError("a missing API key was accepted")
+
+        os.environ[API_KEY_ENV_VAR] = "   "
+        try:
+            assert_api_key_present()
+        except MissingApiKey as exc:
+            assert "is not set" not in str(exc), (
+                f"the key IS present in os.environ (just blank) but the "
+                f"message claims it is not set: {exc!r}"
+            )
+            assert not _has_real_looking_key(str(exc))
+        else:
+            raise AssertionError("a blank API key was accepted")
+    finally:
+        if saved is None:
+            os.environ.pop(API_KEY_ENV_VAR, None)
+        else:
+            os.environ[API_KEY_ENV_VAR] = saved
+
+
 def test_env_files_are_gitignored() -> None:
     """Neither the operator's key nor the bait can reach a commit.
 

@@ -364,7 +364,7 @@ flowchart LR
 A fully captured Reader gets to pick one of four actions and one of four issue
 types. Sixteen combinations, enumerated before the attacker arrived. The two
 fields it can write anything at all into reach the log and nothing else —
-[`ibr/executor.py:128`](ibr/executor.py#L128) is the `match`, and the whole file
+[`ibr/executor.py:190`](ibr/executor.py#L190) is the `match`, and the whole file
 never mentions `reasoning` or `summary` outside the logging record.
 
 That is the difference between the two materials: the audit *probably* stops an

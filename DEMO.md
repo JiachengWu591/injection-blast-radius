@@ -77,7 +77,7 @@ cat sandbox/public_comments.txt   # Get-Content on Windows
 Three things are true of this agent at the same time: it reads untrusted text,
 it can read files, and it can publish. Any two of those are fine. All three in
 one context is the whole bug. Point at
-[`ibr/baseline_agent.py:149`](ibr/baseline_agent.py#L149) — `_post_comment_impl`
+[`ibr/baseline_agent.py:155`](ibr/baseline_agent.py#L155) — `_post_comment_impl`
 does no filtering at all, on purpose.
 
 Two things worth admitting here, because someone will ask:
@@ -126,8 +126,8 @@ That's the actual claim: a fully captured Reader gets to choose among four
 predefined actions, and that set doesn't grow when the attacker gets smarter.
 
 Point at the code while saying it —
-[`ibr/executor.py:128`](ibr/executor.py#L128) for the `match`,
-[`ibr/pipeline.py:413`](ibr/pipeline.py#L413) for the crossing point.
+[`ibr/executor.py:190`](ibr/executor.py#L190) for the `match`,
+[`ibr/pipeline.py:464`](ibr/pipeline.py#L464) for the crossing point.
 
 If you want the strongest version of the claim, run it with no network at all:
 

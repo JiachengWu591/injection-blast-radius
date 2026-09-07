@@ -81,6 +81,18 @@ def ping(model: str, *, client: openai.OpenAI | None = None) -> PingResult:
             }
         ],
     )
+    # `choices` can come back empty — documented provider behaviour for a
+    # request/completion that trips a content or safety filter, returned with
+    # HTTP 200 rather than an error status. Indexing through it unguarded
+    # turns that into an IndexError in the very script whose job is to tell
+    # you whether the API works at all, instead of the clear, fail-closed
+    # StructuredOutputFailure every other malformed-response case in this
+    # file raises.
+    if not response.choices:
+        raise StructuredOutputFailure(
+            "ping: response contained no choices (provider content/safety "
+            "filter?)"
+        )
     # `usage` is optional in the response schema, so reading through it
     # unguarded turns a provider quirk into an AttributeError in the very
     # script whose job is to tell you whether the API works at all.
@@ -189,6 +201,18 @@ def call_structured_tool(
             # rather than in an opaque provider-side channel.
             extra_body={"thinking": {"type": "disabled"}},
         )
+        if not response.choices:
+            # Documented provider behaviour, not a hypothetical: a
+            # request/completion that trips a content or safety filter comes
+            # back HTTP 200 with `choices: []` — exactly the class of input
+            # this pipeline is built to process (adversarial issue text).
+            # Indexing through it unguarded raised IndexError before this
+            # loop's own malformed-response handling ever ran. Treated the
+            # same as every other malformed shape here: record why, retry,
+            # and if it never recovers the loop below raises
+            # StructuredOutputFailure like it does for the rest.
+            last_error = "the response contained no choices (provider content/safety filter?)"
+            continue
         message = response.choices[0].message
 
         tool_calls = message.tool_calls or []

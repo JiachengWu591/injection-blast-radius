@@ -93,9 +93,17 @@ def assert_api_key_present() -> None:
     not auto-discover an arbitrary provider's env var name), but the value
     never passes through this function, a log line, or a repr anywhere else.
     """
-    if not os.environ.get(API_KEY_ENV_VAR, "").strip():
+    raw_value = os.environ.get(API_KEY_ENV_VAR)
+    if raw_value is None:
         raise MissingApiKey(
             f"{API_KEY_ENV_VAR} is not set. Put it in {PROJECT_ROOT / '.env'} "
             "(copy .env.example) or export it in your shell. Refusing to run: "
             "a missing key must stop the demo, not silently downgrade it."
+        )
+    if not raw_value.strip():
+        raise MissingApiKey(
+            f"{API_KEY_ENV_VAR} is set but blank. Put a real value in "
+            f"{PROJECT_ROOT / '.env'} (copy .env.example) or export it in "
+            "your shell. Refusing to run: a missing key must stop the demo, "
+            "not silently downgrade it."
         )

@@ -360,6 +360,85 @@ def test_output_audit_blocks_publication_when_a_template_is_contaminated() -> No
     assert audit_output(COMMENT_TEMPLATES["bug"]).blocked is False
 
 
+def test_a_secret_shaped_issue_id_is_blocked_on_the_comment_path() -> None:
+    """`issue_id` reaches the published line even when the body is a clean template.
+
+    A fresh bug hunt on modules no earlier round this session had examined
+    found that `_publish` only ever audited the static template, never the
+    actual bytes a sink writes -- and every concrete sink interpolates
+    `issue_id` directly into the published line
+    (`SandboxActionSink.publish_comment`'s header). An id shaped like a real
+    secret -- here an AWS access key id, fully admitted by
+    `Issue.__post_init__`'s `[A-Za-z0-9._-]{1,64}` charset -- used to reach
+    `sandbox/public_comments.txt` with zero audit coverage. Confirmed before
+    this fix: the audit saw only the clean template and passed, while the
+    line actually written to disk was secret-shaped.
+    """
+    reset_public_comments()
+    secret_shaped_id = "AKIAIOSFODNN7EXAMPLE"
+    decision = execute(secret_shaped_id, _poisoned_reader_output(action="reply_comment"))
+
+    assert decision.action_taken == "blocked_by_output_audit"
+    assert decision.published_comment is None
+    assert decision.output_audit is not None
+    assert decision.output_audit.blocked is True
+    assert "regex:aws_access_key_id" in decision.output_audit.summary
+    assert sandbox_fs.read_text(PUBLIC_COMMENTS_PATH) == ""
+
+
+def test_a_secret_shaped_issue_id_is_blocked_on_the_label_path() -> None:
+    """The label path had no output audit at all before this fix -- not even a stub.
+
+    `SandboxActionSink.add_label` interpolates `issue_id` into the published
+    line exactly as `publish_comment` does, but `execute`'s `label_bug`/
+    `label_question` arms used to call `sink.add_label` directly with no
+    output-audit check whatsoever -- the gap above, on a path with even less
+    coverage than the comment path had.
+    """
+    reset_labels()
+    secret_shaped_id = "AKIAIOSFODNN7EXAMPLE"
+
+    for action in ("label_bug", "label_question"):
+        decision = execute(secret_shaped_id, _poisoned_reader_output(action=action))
+
+        assert decision.action_taken == "blocked_by_output_audit", action
+        assert decision.labels_added == (), action
+        assert decision.output_audit is not None, action
+        assert decision.output_audit.blocked is True, action
+        assert "regex:aws_access_key_id" in decision.output_audit.summary, action
+
+    assert sandbox_fs.read_text(LABELS_PATH) == ""
+
+
+def test_an_ordinary_long_issue_id_is_not_blocked_as_a_false_positive() -> None:
+    """Auditing `issue_id` must not turn every long slug into a false positive.
+
+    The first version of the two tests above audited `issue_id` together
+    with `body`/`label` in one `audit_output` call, entropy scan included.
+    That broke `tests/test_attack_corpus.py::test_no_pattern_can_leak_through_a_captured_reader`,
+    whose issue ids are shaped like `f"corpus-{pattern.key}"` -- e.g.
+    `corpus-direct_override`, 22 characters of letters, a hyphen, and an
+    underscore. The entropy heuristic treats any 20+-character token from a
+    broad charset as suspicious regardless of what it actually says, so an
+    ordinary, completely benign issue id tripped `blocked_by_output_audit`
+    purely for being long and varied. Fixed by scanning `issue_id` with
+    `audit_output(issue_id, scan_entropy=False)` -- regex patterns only, no
+    entropy heuristic -- while `body`/`label` keep the full scan.
+    """
+    reset_public_comments()
+    reset_labels()
+    ordinary_id = "corpus-direct_override"
+    assert len(ordinary_id) >= 20, "the id must be long enough to trip the entropy heuristic"
+
+    comment_decision = execute(ordinary_id, _poisoned_reader_output(action="reply_comment"))
+    assert comment_decision.action_taken == "reply_comment"
+    assert comment_decision.published_comment == COMMENT_TEMPLATES["bug"]
+
+    label_decision = execute(ordinary_id, _poisoned_reader_output(action="label_bug"))
+    assert label_decision.action_taken == "label_bug"
+    assert label_decision.labels_added == ("bug",)
+
+
 def test_an_issue_type_with_no_template_becomes_no_action() -> None:
     """Fail-closed on a gap between the two enums.
 
@@ -561,6 +640,42 @@ def test_schema_parsers_reject_malformed_payloads() -> None:
         raise AssertionError(f"reader parser accepted {payload!r}")
 
 
+def test_a_payload_with_an_undeclared_extra_key_is_rejected_by_both_parsers() -> None:
+    """additionalProperties: False in the schema must be enforced in Python.
+
+    The schemas declare additionalProperties: False and the module docstring
+    claims the hand-written parsers are the independent, non-provider-trusting
+    validation layer. If the provider's own strict-mode enforcement is ever
+    imperfect, a smuggled extra key must still be caught here.
+    """
+    audit_payload = {
+        "reasoning": "looks fine",
+        "risk_level": "safe",
+        "matched_patterns": [],
+        "arbitrary_injected_field": {"anything": "goes"},
+    }
+    try:
+        parse_audit_verdict(audit_payload)
+    except SchemaViolation:
+        pass
+    else:
+        raise AssertionError("audit parser accepted an undeclared extra key")
+
+    reader_payload = {
+        "reasoning": "x",
+        "issue_type": "bug",
+        "summary": "y",
+        "suggested_action": "no_action",
+        "unexpected_extra_field": "smuggled",
+    }
+    try:
+        parse_reader_output(reader_payload)
+    except SchemaViolation:
+        pass
+    else:
+        raise AssertionError("reader parser accepted an undeclared extra key")
+
+
 def test_output_audit_catches_secret_shapes() -> None:
     assert audit_output(BAIT_ENV_CONTENT).blocked is True
     assert audit_output("here is sk-live-abcdef0123456789xyz").blocked is True
@@ -575,6 +690,32 @@ def test_output_audit_catches_secret_shapes() -> None:
     for clean in COMMENT_TEMPLATES.values():
         assert audit_output(clean).blocked is False
     assert audit_output("Thanks for the report, we'll take a look.").blocked is False
+
+
+def test_output_audit_catches_bare_and_short_prefix_credential_assignments() -> None:
+    """Regression test: an off-by-one in the identifier-prefix minimum.
+
+    ``env_credential_assignment`` required at least 3 characters ahead of the
+    literal ``_KEY``/``_PASSWORD``/... suffix (1 from the mandatory leading
+    `[A-Z]` plus `{2,}` more), so a completely bare assignment with no
+    underscore at all (``PASSWORD=...``) and a 2-character prefix
+    (``DB_PASSWORD=...``) both fell through — the literal `_` before the
+    keyword can never match a bare assignment, and a 2-char prefix is one
+    short of the 3-char floor. The entropy scanner does not save these cases
+    either: it only fires on a 20+ character run above 3.5 bits/char of
+    entropy, which a short or deliberately low-entropy value like `hunter2`
+    or a run of zeros never reaches.
+    """
+    assert audit_output("PASSWORD=hunter2").blocked is True
+    assert audit_output("SECRET=00000000000000000000").blocked is True
+    assert audit_output("TOKEN=x").blocked is True
+    assert audit_output("KEY=x").blocked is True
+    assert audit_output("CREDENTIAL=x").blocked is True
+    assert audit_output("DB_PASSWORD=00000000000000000000").blocked is True
+    assert audit_output("PW_PASSWD=x").blocked is True
+
+    # The previously-covered 3+ letter prefix case must keep matching.
+    assert audit_output("API_KEY=00000000000000000000").blocked is True
 
 
 def test_entropy_helper_separates_prose_from_random_strings() -> None:

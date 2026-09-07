@@ -345,6 +345,95 @@ def test_isolated_malicious_with_bypass_reaches_the_reader_and_still_holds() -> 
         assert result.decision.published_comment in COMMENT_TEMPLATES.values()
 
 
+def test_bypass_is_not_reported_when_the_real_verdict_was_not_high_risk() -> None:
+    """`simulate_audit_bypass=True` must not claim a bypass that never happened.
+
+    The short-circuit above it in `run_isolated` only ever fires when the real
+    verdict is high_risk — that is the one case `simulate_audit_bypass` has
+    anything to skip. When the audit comes back `safe` (ordinary run-to-run
+    variance, PROJECT_SPEC.md §1.1), the short-circuit was never going to fire
+    either way, so nothing was bypassed: the Reader runs exactly as it would
+    with `simulate_audit_bypass=False`. Reporting `audit_bypass_simulated =
+    True` and "an attacker who defeated the probabilistic layer" in that case
+    credits the switch for work it did not do — the same "crediting a
+    mechanism for work it did not do" mistake ibr/comparison.py's own
+    docstrings describe for a failed audit call counted as a detection, one
+    layer down.
+
+    The live audit does not reliably return `safe` on the malicious fixture
+    (see `test_isolated_malicious_short_circuits_on_high_risk`), so this uses
+    constructed responses rather than a cassette, following the pattern in
+    tests/test_failure_paths.py.
+    """
+
+    def _synthetic_tool_call(tool_name: str, arguments: str) -> dict:
+        call = {
+            "id": "c1",
+            "type": "function",
+            "function": {"name": tool_name, "arguments": arguments},
+        }
+        return {
+            "synthetic": (
+                f"a constructed {tool_name} response with a fixed verdict, "
+                "needed to exercise a real-verdict/bypass-requested "
+                "combination the live audit does not reliably produce"
+            ),
+            "response": {
+                "model": "synthetic",
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "tool_calls": [call],
+                            "model_dump": {"role": "assistant", "tool_calls": [call]},
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            },
+        }
+
+    client = replay.from_interactions(
+        [
+            _synthetic_tool_call(
+                "report_security_assessment",
+                '{"reasoning": "an ordinary bug report", "risk_level": "safe", '
+                '"matched_patterns": []}',
+            ),
+            _synthetic_tool_call(
+                "report_issue_triage",
+                '{"reasoning": "classified", "issue_type": "bug", '
+                '"summary": "s", "suggested_action": "no_action"}',
+            ),
+        ],
+        name="bypass_not_applicable",
+    )
+    reset_public_comments()
+    reset_labels()
+    result = run_isolated(
+        load_issue("malicious"),
+        client=cast("Any", client),
+        simulate_audit_bypass=True,
+    )
+    client.assert_fully_consumed()
+
+    assert result.audit is not None
+    assert result.audit.risk_level == "safe"
+    assert result.audit.is_high_risk is False
+    assert result.audit_bypass_simulated is False, (
+        "nothing was bypassed — the real verdict was not high_risk, so the "
+        "short-circuit would not have fired even without the bypass request"
+    )
+    for stage in result.stages:
+        assert "defeated the probabilistic layer" not in stage.detail, (
+            f"{stage.stage}: claimed a defeated audit when the real verdict "
+            f"was {result.audit.risk_level!r}"
+        )
+    assert "reader" in [s.stage for s in result.stages], (
+        "the Reader should still have run — safe verdicts never short-circuit"
+    )
+
+
 def test_replayed_run_logs_reasoning_before_the_verdict() -> None:
     """Covers the observability path against a real recorded response."""
     result = _isolated("isolated_benign", "benign")

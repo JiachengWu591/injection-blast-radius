@@ -96,6 +96,7 @@ class AuditVerdict:
 def parse_audit_verdict(payload: object) -> AuditVerdict:
     """Validate raw audit output, or raise. No partial acceptance."""
     data = _require_object(payload, "audit")
+    _reject_unknown_keys(data, AUDIT_SCHEMA, "audit")
     reasoning = _require_str(data, "reasoning", "audit")
     risk_level = _require_enum(data, "risk_level", RISK_LEVELS, "audit")
     patterns = _require_str_list(data, "matched_patterns", "audit")
@@ -165,6 +166,7 @@ class ReaderOutput:
 def parse_reader_output(payload: object) -> ReaderOutput:
     """Validate raw reader output, or raise. No partial acceptance."""
     data = _require_object(payload, "reader")
+    _reject_unknown_keys(data, READER_SCHEMA, "reader")
     return ReaderOutput(
         reasoning=_require_str(data, "reasoning", "reader"),
         issue_type=_require_enum(data, "issue_type", ISSUE_TYPES, "reader"),
@@ -186,6 +188,21 @@ def _require_object(payload: object, where: str) -> dict:
     if not isinstance(payload, dict):
         raise SchemaViolation(f"{where}: expected a JSON object, got {type(payload).__name__}")
     return payload
+
+
+def _reject_unknown_keys(data: dict, schema: dict, where: str) -> None:
+    """Enforce the schema's own `additionalProperties: False` declaration.
+
+    The schema's declared property names are the single source of truth here
+    — read off `schema["properties"]` rather than restated, so this check
+    cannot silently drift out of sync if a field is ever added to a schema.
+    This is the local half of "neither side is trusted on its own": provider
+    strict-mode enforcement of additionalProperties is not assumed reliable.
+    """
+    allowed = schema["properties"].keys()
+    unknown = sorted(key for key in data if key not in allowed)
+    if unknown:
+        raise SchemaViolation(f"{where}: unexpected field(s) not permitted by schema: {unknown}")
 
 
 def _require_str(data: dict, field: str, where: str) -> str:

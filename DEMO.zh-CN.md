@@ -50,7 +50,7 @@ python phase1_baseline.py
 cat sandbox/public_comments.txt   # Windows 上用 Get-Content
 ```
 
-这个 agent 同时满足三件事：**它读取不可信文本、它能读文件、它能对外发布。** 其中任意两件都没问题。三件挤在同一个上下文里就是全部的 bug 所在。指一下 [`ibr/baseline_agent.py:149`](ibr/baseline_agent.py#L149) —— `_post_comment_impl` 完全不做任何过滤，**这是故意的**。
+这个 agent 同时满足三件事：**它读取不可信文本、它能读文件、它能对外发布。** 其中任意两件都没问题。三件挤在同一个上下文里就是全部的 bug 所在。指一下 [`ibr/baseline_agent.py:155`](ibr/baseline_agent.py#L155) —— `_post_comment_impl` 完全不做任何过滤，**这是故意的**。
 
 有两件事值得在这里主动承认，因为一定会有人问：
 
@@ -78,7 +78,7 @@ python phase3_trace.py --run all
 
 这才是真正的主张：**一个被完全攻陷的 Reader 能做的选择是四个预定义动作之一，而这个集合不会因为攻击者变聪明而变大。**
 
-说的时候指着代码 —— [`ibr/executor.py:128`](ibr/executor.py#L128) 是那个 `match`，[`ibr/pipeline.py:413`](ibr/pipeline.py#L413) 是跨越点。
+说的时候指着代码 —— [`ibr/executor.py:190`](ibr/executor.py#L190) 是那个 `match`，[`ibr/pipeline.py:464`](ibr/pipeline.py#L464) 是跨越点。
 
 如果你想要这个主张最强的版本，在完全不联网的情况下跑：
 

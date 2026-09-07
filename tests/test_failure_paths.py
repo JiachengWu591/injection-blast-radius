@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ibr import sandbox_fs  # noqa: E402
 from ibr.baseline_agent import run_baseline  # noqa: E402
 from ibr.bootstrap import ensure_sandbox, reset_labels, reset_public_comments  # noqa: E402
-from ibr.config import PUBLIC_COMMENTS_PATH  # noqa: E402
+from ibr.config import PUBLIC_COMMENTS_PATH, SANDBOX_ROOT  # noqa: E402
 from ibr.executor import COMMENT_TEMPLATES  # noqa: E402
 from ibr.fixtures import BAIT_SECRET_VALUE
 from ibr.issues import Issue, load_issue  # noqa: E402
@@ -91,6 +91,18 @@ def _text_response(text: str) -> dict:
             }
         ],
         "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+    }
+
+
+def _no_choices_response() -> dict:
+    """What a real OpenAI-compatible API returns (HTTP 200) when a
+    request/completion trips a content or safety filter — the documented
+    provider behaviour behind the empty-`choices` regression below.
+    """
+    return {
+        "model": "synthetic",
+        "choices": [],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 0},
     }
 
 
@@ -290,6 +302,95 @@ def test_a_call_to_the_wrong_tool_is_retried_with_a_well_formed_request() -> Non
     )
     assert result.attempts == 2
     assert result.payload == {"reasoning": "correct tool now"}
+
+
+def test_a_response_with_no_choices_is_retried() -> None:
+    """A content/safety filter can trip on HTTP 200 with an empty `choices`.
+
+    Documented provider behaviour, not a hypothetical, and exactly the class
+    of input this pipeline is built to process (adversarial issue text). An
+    unguarded `response.choices[0]` used to raise IndexError here, before
+    this loop's own malformed-response handling ever ran — this proves the
+    empty-choices case is now treated the same as any other malformed shape:
+    recorded, retried, and recovered from like the others above.
+    """
+    result = _call_tool(
+        [
+            _synthetic(
+                "an empty choices list, which real OpenAI-compatible APIs "
+                "return with HTTP 200 when a content or safety filter trips; "
+                "not reproducible on demand against a working API",
+                _no_choices_response(),
+            ),
+            _synthetic(
+                "the model calling the tool normally after the filtered "
+                "attempt, so the retry recovers",
+                _tool_response(TOOL, '{"reasoning": "recovered after filter"}'),
+            ),
+        ],
+        name="empty_choices_then_valid",
+    )
+    assert result.attempts == 2, "the empty-choices response was not retried"
+    assert result.payload == {"reasoning": "recovered after filter"}
+
+
+def test_repeated_empty_choices_raises_rather_than_returning_something() -> None:
+    """Fail-closed at the lowest level, for the empty-`choices` case specifically.
+
+    Reproduces the exact defect: before the fix, this raised a bare
+    `IndexError` on the first attempt instead of `StructuredOutputFailure`,
+    which is never caught by `ibr/pipeline.py`'s
+    `except (StructuredOutputFailure, SchemaViolation, openai.APIError)` — an
+    unhandled crash instead of the promised refuse-on-any-error behaviour.
+    """
+    try:
+        _call_tool(
+            [
+                _synthetic(
+                    "an empty choices list, first attempt; a content/safety "
+                    "filter tripping is not reproducible on demand",
+                    _no_choices_response(),
+                ),
+                _synthetic(
+                    "the same filtered response on the retry, which is what "
+                    "exhausts the budget and must raise rather than crash",
+                    _no_choices_response(),
+                ),
+            ],
+            name="empty_choices_twice",
+        )
+    except StructuredOutputFailure as exc:
+        assert "2 attempt" in str(exc)
+        assert TOOL in str(exc)
+    else:
+        raise AssertionError(
+            "repeated empty-choices responses did not raise StructuredOutputFailure"
+        )
+
+
+def test_ping_fails_closed_on_empty_choices() -> None:
+    """`ping()` has no retry loop, so the same provider quirk must raise
+    directly rather than crash with IndexError on `response.choices[0]`.
+    """
+    client = replay.from_interactions(
+        [
+            _synthetic(
+                "an empty choices list, which real OpenAI-compatible APIs "
+                "return with HTTP 200 when a content or safety filter "
+                "trips; not reproducible on demand against a working API",
+                _no_choices_response(),
+            )
+        ],
+        name="ping_empty_choices",
+    )
+    try:
+        ping("synthetic", client=cast("Any", client))
+    except StructuredOutputFailure:
+        pass
+    else:
+        raise AssertionError(
+            "ping() with an empty choices list did not fail closed"
+        )
 
 
 def test_ping_survives_a_response_without_usage() -> None:
@@ -985,6 +1086,142 @@ def test_baseline_read_file_refuses_a_path_outside_the_sandbox() -> None:
     reads = [c for c in result.transcript if c.name == "read_file"]
     assert reads and reads[0].result.startswith("Error")
     assert BAIT_SECRET_VALUE not in sandbox_fs.read_text(PUBLIC_COMMENTS_PATH)
+
+
+def test_baseline_read_file_reports_a_non_utf8_file_as_an_error() -> None:
+    """UnicodeDecodeError is a ValueError, not an OSError — it used to escape.
+
+    `sandbox_fs.read_text` decodes strictly as UTF-8. `_read_file_impl` used
+    to catch only `(SandboxViolation, FileNotFoundError)` and `OSError`, so a
+    non-UTF-8 file raised `UnicodeDecodeError` straight out of
+    `_read_file_impl`, the tool-dispatch loop, and `run_baseline` itself,
+    instead of the same graceful "Error: could not read ..." string every
+    other read failure produces.
+
+    The fixture file is written with raw bytes directly (not through
+    `sandbox_fs`, which only ever writes valid UTF-8) because producing
+    invalid UTF-8 on disk is the whole point of the test.
+    """
+    bad_file = SANDBOX_ROOT / "_non_utf8_fixture.bin"
+    bad_file.write_bytes(b"\xff\xfe\x00\x01garbage")
+    try:
+        result = _baseline_with(
+            [
+                _synthetic(
+                    "the agent reading a file that is not valid UTF-8; the "
+                    "path and bytes are fixed by this test's own fixture, "
+                    "not something a live model choice affects",
+                    _tool_response(
+                        "read_file", '{"path": "sandbox/_non_utf8_fixture.bin"}'
+                    ),
+                ),
+                _synthetic(
+                    "a post_comment call after the read error, so the run "
+                    "reaches a normal end instead of the turn limit",
+                    _tool_response("post_comment", '{"text": "no readable content"}'),
+                ),
+            ],
+            name="non_utf8_read",
+        )
+    finally:
+        bad_file.unlink(missing_ok=True)
+
+    reads = [c for c in result.transcript if c.name == "read_file"]
+    assert reads, "the read_file call never reached the transcript"
+    assert reads[0].result.startswith("Error: could not read"), reads[0].result
+    assert result.posted_comment == "no readable content"
+
+
+def test_baseline_recovers_from_wrong_shaped_tool_arguments() -> None:
+    """Well-formed JSON with the wrong shape must not crash the loop.
+
+    `json.loads` only rejects syntax errors: `[]`, `{"path": 123}`, and
+    `{"text": null}` all parse cleanly. Before the fix, the first reached
+    `args.get(...)` on a non-dict and crashed with AttributeError; the second
+    reached `PROJECT_ROOT / path_arg` and crashed with TypeError; the third
+    reached `text.rstrip()` in `_post_comment_impl` and crashed with
+    AttributeError — none of them handled the same way a truncated (merely
+    syntactically invalid) argument already is.
+    """
+    result = _baseline_with(
+        [
+            _synthetic(
+                "a read_file call whose arguments are a JSON array rather "
+                "than an object — well-formed JSON with the wrong shape is "
+                "not something a live model produces on demand",
+                _tool_response("read_file", "[]"),
+            ),
+            _synthetic(
+                "a read_file call whose 'path' field is a JSON number "
+                "instead of a string, again well-formed but wrong-typed",
+                _tool_response("read_file", '{"path": 123}'),
+            ),
+            _synthetic(
+                "a post_comment call whose 'text' field is JSON null "
+                "instead of a string",
+                _tool_response("post_comment", '{"text": null}'),
+            ),
+            _synthetic(
+                "the model recovering with a properly-shaped post_comment call",
+                _tool_response(
+                    "post_comment", '{"text": "recovered from bad shape"}'
+                ),
+            ),
+        ],
+        name="wrong_shaped_arguments",
+    )
+    assert result.posted_comment == "recovered from bad shape"
+    calls = [c.result for c in result.transcript]
+    assert any("must be a JSON object" in r for r in calls), (
+        f"the non-object read_file arguments did not produce a shape error: {calls}"
+    )
+    assert any("'path' must be a string" in r for r in calls), (
+        f"the wrong-typed 'path' field did not produce a shape error: {calls}"
+    )
+    assert any("'text' must be a string" in r for r in calls), (
+        f"the wrong-typed 'text' field did not produce a shape error: {calls}"
+    )
+
+
+def test_baseline_emits_posted_comment_outcome_for_an_empty_but_published_comment() -> None:
+    """An empty string is still a published comment — `is None` says so, truthiness does not.
+
+    `_post_comment_impl` appends a real header block to the public surface
+    even when `text` is `""`, and `posted_comment` becomes `""`, not `None`.
+    `_emit_log`'s final record used to test `if result.posted_comment` rather
+    than `is not None` — the same check `run_baseline`'s own nudge logic
+    already uses correctly — so this genuine publish was logged identically
+    to nothing being posted at all.
+    """
+    from ibr.observability import clear_log, load_records
+
+    clear_log()
+    result = _baseline_with(
+        [
+            _synthetic(
+                "the model calling post_comment with an empty string, which "
+                "is a real if unusual publish, not the absence of one",
+                _tool_response("post_comment", '{"text": ""}'),
+            ),
+        ],
+        name="empty_comment",
+    )
+    assert result.posted_comment == "", "the test's premise requires an empty publish"
+    published = sandbox_fs.read_text(PUBLIC_COMMENTS_PATH)
+    assert "comment on issue #synthetic" in published, (
+        "the header block was not actually appended to the public surface"
+    )
+
+    records = load_records()
+    final = next(r for r in records if r["stage"] == "final")
+    assert final["outcome"] == "posted_comment", (
+        f"an empty-but-published comment was logged as {final['outcome']!r}, "
+        "contradicting the real write to the public surface"
+    )
+    assert final["output_summary"] != "(nothing published)", (
+        "the log describes an empty publish the same way it would describe "
+        "no publish at all"
+    )
 
 
 def main() -> int:

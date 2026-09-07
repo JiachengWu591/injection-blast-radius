@@ -142,7 +142,13 @@ def _read_file_impl(repo_relative_path: str) -> str:
         return sandbox_fs.read_text(PROJECT_ROOT / repo_relative_path)
     except (SandboxViolation, FileNotFoundError):
         return unavailable
-    except OSError as exc:
+    # sandbox_fs.read_text decodes strictly as UTF-8, so a file that isn't
+    # valid UTF-8 raises UnicodeDecodeError — a ValueError subclass, not an
+    # OSError subclass, so it would otherwise fall through both except
+    # clauses here and escape _read_file_impl, the tool-dispatch loop, and
+    # run_baseline itself uncaught, instead of producing the same graceful
+    # error string every other read failure produces.
+    except (OSError, UnicodeDecodeError) as exc:
         return f"Error: could not read {repo_relative_path!r}: {exc}"
 
 
@@ -184,10 +190,21 @@ def _emit_log(result: BaselineRunResult) -> None:
             architecture="baseline",
             issue_id=result.issue_id,
             stage="final",
-            outcome="posted_comment" if result.posted_comment else "no_comment",
+            # `posted_comment: str | None` distinguishes "nothing was posted"
+            # (None) from "this text was posted" (any str, including ""). A
+            # truthiness check collapses those two: post_comment called with
+            # {"text": ""} still appends a real header block to the public
+            # surface, so logging it identically to no comment at all
+            # contradicts the sandbox's actual state. `is not None` is the
+            # same check run_baseline's own nudge logic already uses above.
+            outcome="posted_comment" if result.posted_comment is not None else "no_comment",
             duration_ms=0.0,
             input_summary=f"turns_used={result.turns_used}",
-            output_summary=summarize(result.posted_comment or "(nothing published)"),
+            output_summary=summarize(
+                result.posted_comment
+                if result.posted_comment is not None
+                else "(nothing published)"
+            ),
             detail="no output audit exists in the baseline",
         )
     )
@@ -308,13 +325,44 @@ def run_baseline(
                 )
                 continue
 
-            if tool_call.function.name == "read_file":
-                result = _read_file_impl(args.get("path", ""))
+            if not isinstance(args, dict):
+                # json.loads accepts any JSON value, not just objects — `[]`,
+                # `null`, `"x"`, `42` all parse cleanly and would otherwise
+                # reach `.get(...)` below and crash with an AttributeError.
+                # Same recovery as malformed JSON: the shape is wrong either
+                # way, so this is a tool-result error, not a crash.
+                result = (
+                    "Error: your last tool call's arguments must be a JSON "
+                    "object (they may have been cut off by the token limit) "
+                    "— retry with a shorter argument value."
+                )
+            elif tool_call.function.name == "read_file":
+                path_arg = args.get("path", "")
+                if isinstance(path_arg, str):
+                    result = _read_file_impl(path_arg)
+                else:
+                    # A field can be present with the wrong type even when the
+                    # object itself is well-formed (e.g. {"path": 123}), which
+                    # would otherwise reach PROJECT_ROOT / path_arg and crash
+                    # with a TypeError instead of a handled tool error.
+                    result = (
+                        f"Error: 'path' must be a string, got "
+                        f"{type(path_arg).__name__}."
+                    )
             elif tool_call.function.name == "post_comment":
-                text = args.get("text", "")
-                _post_comment_impl(issue.issue_id, text)
-                posted_comment = text
-                result = "Comment published."
+                text_arg = args.get("text", "")
+                if isinstance(text_arg, str):
+                    _post_comment_impl(issue.issue_id, text_arg)
+                    posted_comment = text_arg
+                    result = "Comment published."
+                else:
+                    # Same reasoning as 'path' above: {"text": null} would
+                    # otherwise reach text.rstrip() in _post_comment_impl and
+                    # crash with an AttributeError.
+                    result = (
+                        f"Error: 'text' must be a string, got "
+                        f"{type(text_arg).__name__}."
+                    )
             else:
                 result = f"Error: unknown tool {tool_call.function.name!r}"
 

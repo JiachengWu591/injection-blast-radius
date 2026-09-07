@@ -99,6 +99,19 @@ class PipelineResult:
     decision: ExecutorDecision | None = None
     stages: list[StageRecord] = field(default_factory=list)
     audit_bypass_simulated: bool = False
+    """True only when the real audit verdict actually was high_risk.
+
+    `simulate_audit_bypass=True` on `run_isolated` only ever had something to
+    bypass when the short-circuit would otherwise have fired — i.e. the audit
+    really did come back high_risk. If it came back "safe" or "suspicious"
+    (ordinary run-to-run variance, PROJECT_SPEC.md §1.1), the short-circuit
+    was never going to happen either way, so nothing was bypassed. This field
+    reflects that rather than the caller's request: it is False when the
+    switch was asked for but had nothing to do, so a reader (including
+    `ibr/comparison.py`'s Phase 4 note) never sees "an attacker defeated the
+    probabilistic layer" credited against a verdict the probabilistic layer
+    never actually flagged.
+    """
     log_write_error: str | None = None
     """Set when `_emit_log` could not append this run's trace record.
 
@@ -261,6 +274,15 @@ def run_isolated(
     produce a harmful action — has to be observable on demand rather than
     only when someone happens to craft an attack that beats today's screening
     model (PROJECT_SPEC.md §1.1, §5 scene 3).
+
+    The switch only has something to do when the real verdict actually is
+    high_risk — that is the one case where the short-circuit below would
+    otherwise have fired. If the real verdict is "safe" or "suspicious"
+    (ordinary run-to-run variance, PROJECT_SPEC.md §1.1), the short-circuit
+    was never going to happen anyway, so requesting the bypass changes
+    nothing: `result.audit_bypass_simulated` stays False and the pipeline is
+    not reported as having modeled an attacker who "defeated" a layer that
+    never flagged this input in the first place.
     """
     client = client or build_client()
     result = PipelineResult(issue_id=issue.issue_id)
@@ -343,7 +365,10 @@ def run_isolated(
         _emit_log(result)
         return result
 
-    if simulate_audit_bypass:
+    if simulate_audit_bypass and verdict.is_high_risk:
+        # A genuine bypass: the short-circuit above would have fired here had
+        # simulate_audit_bypass not suppressed it, so this is the one case
+        # where the switch actually did something.
         result.audit_bypass_simulated = True
         result.stages.append(
             StageRecord(
@@ -353,6 +378,32 @@ def run_isolated(
                     f"real verdict was {verdict.risk_level!r}; short-circuit "
                     "skipped to model an attacker who defeated the "
                     "probabilistic layer"
+                ),
+                duration_ms=0.0,
+            )
+        )
+    elif simulate_audit_bypass:
+        # Requested, but there was nothing to bypass: the real verdict is not
+        # high_risk, so the short-circuit above would never have fired even
+        # with simulate_audit_bypass=False — the Reader was always going to
+        # run next. Claiming audit_bypass_simulated=True here would report
+        # "an attacker defeated the probabilistic layer" about a verdict the
+        # probabilistic layer never flagged in the first place: the same
+        # "credit the mechanism for work it did not do" mistake
+        # ibr/comparison.py's docstrings describe for a failed audit call
+        # counted as a detection. result.audit_bypass_simulated stays False;
+        # this stage record exists only so a reader of the trace sees the
+        # request was received and correctly judged inapplicable, rather than
+        # wondering why nothing marks it at all.
+        result.stages.append(
+            StageRecord(
+                stage="audit_bypass",
+                outcome="not_applicable",
+                detail=(
+                    f"bypass requested but real verdict was "
+                    f"{verdict.risk_level!r}, not high_risk — the "
+                    "short-circuit would not have fired anyway, so nothing "
+                    "was actually bypassed"
                 ),
                 duration_ms=0.0,
             )

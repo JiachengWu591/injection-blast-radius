@@ -8,8 +8,12 @@ rules that are not negotiable:
      including the case where the Reader produced nothing at all — is
      no_action.
   2. `reasoning` and `summary` are never read here. Grep this file: the two
-     attacker-controllable fields appear in exactly one place, the logging
-     record, and never in a branch condition or an output string.
+     attacker-controllable fields do not appear here at all — this module
+     never reads `ReaderOutput.reasoning` or `.summary`, in a branch
+     condition, an output string, or anywhere else. (They do end up in a
+     logging record, but that is `ibr/pipeline.py`'s `StageRecord`
+     construction, a different module; this file has nothing of theirs to
+     log.)
   3. Published text comes from COMMENT_TEMPLATES only. No model-generated text
      is concatenated into it, so there is no path by which issue content can
      reach the public surface, whatever the Reader was persuaded to say.
@@ -36,13 +40,19 @@ from .sinks import DEFAULT_SINK, ActionSink
 # text only — nothing derived from the issue or from model output is
 # interpolated into these strings.
 #
-# The precise claim, because the loose version of it was wrong. A published
-# line is a template plus the sink's own framing, and that framing carries
-# `issue_id`: `SandboxActionSink` writes `comment on issue #{issue_id}` above
-# the body and `issue #{issue_id}: {label}` for a label. So the byte set below
-# is closed, and the published line is closed only because `Issue.__post_init__`
-# constrains the id to `[A-Za-z0-9._-]{1,64}`. Nothing model-generated reaches
-# either — that part was always true — but "derived from the issue" was not.
+# The precise claim, because two looser versions of it were wrong in turn.
+# A published line is a template plus the sink's own framing, and that
+# framing carries `issue_id`: `SandboxActionSink` writes
+# `comment on issue #{issue_id}` above the body and `issue #{issue_id}:
+# {label}` for a label. So the byte set below is closed, but the *published
+# line* is not, and `Issue.__post_init__`'s charset restriction
+# (`[A-Za-z0-9._-]{1,64}`) is not narrow enough on its own to make it safe —
+# that charset fully admits secret-shaped strings (an AWS access key id is
+# exactly `AKIA` plus 16 uppercase-alphanumeric characters). `_publish` and
+# `_add_label` below audit `issue_id` together with what is about to be
+# published for that reason: not because the template can carry model output
+# (it cannot), but because the id sitting next to it in the same published
+# line can, and a charset check alone does not know what a secret looks like.
 COMMENT_TEMPLATES: dict[str, str] = {
     "bug": (
         "Thanks for the report — this has been triaged as a **bug** and queued "
@@ -88,6 +98,15 @@ def _no_action(note: str) -> ExecutorDecision:
     )
 
 
+def _merge_audits(
+    body_verdict: OutputAuditResult, id_verdict: OutputAuditResult
+) -> OutputAuditResult:
+    return OutputAuditResult(
+        blocked=body_verdict.blocked or id_verdict.blocked,
+        findings=tuple(dict.fromkeys(body_verdict.findings + id_verdict.findings)),
+    )
+
+
 def _publish(
     issue_id: str, body: str, sink: ActionSink
 ) -> tuple[str | None, OutputAuditResult]:
@@ -95,12 +114,55 @@ def _publish(
 
     The audit runs here rather than inside the sink on purpose. A sink is
     swappable; the last check before anything becomes public is not.
+
+    Audits `issue_id` as well as `body`, not `body` alone. `body` is always a
+    static template, so auditing it by itself would only ever see text that
+    is already known clean — every concrete sink interpolates `issue_id`
+    directly into the actual published line (see
+    `SandboxActionSink.publish_comment`'s header), and that id is
+    attacker-influenced (`ibr/issues.py`'s own docstring says so) and not
+    constrained tightly enough to rule out a secret-shaped string. Auditing
+    the template alone let exactly that reach the public surface, unaudited,
+    before this check existed — reproduced by publishing an issue id shaped
+    like an AWS access key id and confirming the actual published line would
+    have tripped this same audit, had it run on it.
+
+    `issue_id` is scanned with `scan_entropy=False`: the entropy heuristic
+    flags any long, varied-character token as suspicious, and an ordinary
+    hyphenated/underscored issue id is exactly that shape without being a
+    secret — concatenating it into one entropy scan with `body` produced
+    false positives on completely benign ids (reproduced against this
+    project's own attack corpus, whose test issue ids include one 22
+    characters long). The regex patterns are shape-specific enough to run on
+    `issue_id` directly without that problem.
     """
-    verdict = audit_output(body)
+    body_verdict = audit_output(body)
+    id_verdict = audit_output(issue_id, scan_entropy=False)
+    verdict = _merge_audits(body_verdict, id_verdict)
     if verdict.blocked:
         return None, verdict
     sink.publish_comment(issue_id, body)
     return body, verdict
+
+
+def _add_label(
+    issue_id: str, label: str, sink: ActionSink
+) -> tuple[str | None, OutputAuditResult]:
+    """Mirror of `_publish` for the label path, which had no audit at all.
+
+    `label` is always one of the fixed action-set labels, but `issue_id` is
+    not, and `SandboxActionSink.add_label` interpolates it directly into the
+    published line exactly as `publish_comment` does — the same gap, on a
+    path that previously called the sink with no audit whatsoever. See
+    `_publish` for why `issue_id` is scanned with `scan_entropy=False`.
+    """
+    label_verdict = audit_output(label)
+    id_verdict = audit_output(issue_id, scan_entropy=False)
+    verdict = _merge_audits(label_verdict, id_verdict)
+    if verdict.blocked:
+        return None, verdict
+    sink.add_label(issue_id, label)
+    return label, verdict
 
 
 def execute(
@@ -150,22 +212,38 @@ def execute(
             )
 
         case "label_bug":
-            sink.add_label(issue_id, "bug")
+            added, verdict = _add_label(issue_id, "bug", sink)
+            if added is None:
+                return ExecutorDecision(
+                    action_taken="blocked_by_output_audit",
+                    published_comment=None,
+                    labels_added=(),
+                    output_audit=verdict,
+                    note=f"output audit blocked publication: {verdict.summary}",
+                )
             return ExecutorDecision(
                 action_taken="label_bug",
                 published_comment=None,
-                labels_added=("bug",),
-                output_audit=None,
+                labels_added=(added,),
+                output_audit=verdict,
                 note="added label 'bug'",
             )
 
         case "label_question":
-            sink.add_label(issue_id, "question")
+            added, verdict = _add_label(issue_id, "question", sink)
+            if added is None:
+                return ExecutorDecision(
+                    action_taken="blocked_by_output_audit",
+                    published_comment=None,
+                    labels_added=(),
+                    output_audit=verdict,
+                    note=f"output audit blocked publication: {verdict.summary}",
+                )
             return ExecutorDecision(
                 action_taken="label_question",
                 published_comment=None,
-                labels_added=("question",),
-                output_audit=None,
+                labels_added=(added,),
+                output_audit=verdict,
                 note="added label 'question'",
             )
 

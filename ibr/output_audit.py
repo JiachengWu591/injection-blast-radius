@@ -31,7 +31,8 @@ SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "env_credential_assignment",
         re.compile(
-            r"\b[A-Z][A-Z0-9_]{2,}_(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)\s*=\s*\S+"
+            r"\b(?:[A-Z][A-Z0-9_]*_)?"
+            r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)\s*=\s*\S+"
         ),
     ),
     ("aws_access_key_id", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
@@ -61,17 +62,31 @@ def shannon_entropy(text: str) -> float:
     )
 
 
-def audit_output(text: str) -> OutputAuditResult:
-    """Scan text destined for the public surface. A finding means: do not publish."""
+def audit_output(text: str, *, scan_entropy: bool = True) -> OutputAuditResult:
+    """Scan text destined for the public surface. A finding means: do not publish.
+
+    `scan_entropy=False` runs the regex patterns only, skipping the entropy
+    heuristic. Use this for text whose length and character diversity are
+    not attacker-shaped free text the way a comment body is — the entropy
+    check treats any 20+-character token from a broad charset as suspicious,
+    which produces false positives on completely ordinary long identifiers
+    (an issue tracker id like `corpus-direct_override` is 22 characters of
+    letters, a hyphen, and an underscore, and reads as high-entropy by this
+    heuristic despite being nothing of the kind). The regex patterns above
+    are shape-specific enough not to have that problem, so `ibr/executor.py`
+    uses `scan_entropy=False` for `issue_id` while still running the full
+    scan, entropy included, on the comment body.
+    """
     findings: list[str] = []
 
     for name, pattern in SECRET_PATTERNS:
         if pattern.search(text):
             findings.append(f"regex:{name}")
 
-    for token in _TOKEN_RE.findall(text):
-        if shannon_entropy(token) > _ENTROPY_THRESHOLD_BITS:
-            findings.append(f"entropy:{token[:8]}…({len(token)} chars)")
+    if scan_entropy:
+        for token in _TOKEN_RE.findall(text):
+            if shannon_entropy(token) > _ENTROPY_THRESHOLD_BITS:
+                findings.append(f"entropy:{token[:8]}…({len(token)} chars)")
 
     # Deduplicate while preserving order, so a repeated pattern reads as one
     # finding rather than inflating the count. dict.fromkeys rather than the
