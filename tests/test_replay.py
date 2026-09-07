@@ -210,6 +210,70 @@ def test_a_stray_synthetic_key_cannot_silence_a_real_recordings_fingerprint() ->
         )
 
 
+def test_a_stray_raises_key_cannot_silence_a_real_recordings_fingerprint() -> None:
+    """`raises` is the other escape hatch, and it used to run first, unconditionally.
+
+    A fourth self-review round (checking the fix above for anything it
+    missed) found that `_next()` checked `"raises"` and acted on it before
+    ever reaching the ambiguity check against `"fingerprint"` above — so a
+    cassette carrying both `"raises"` and a stale `"fingerprint"` raised the
+    named exception with no `CassetteMismatch` at all. The fingerprint was
+    never computed, let alone compared. Same threat model as the test
+    above: `_raises()` in test_failure_paths.py never emits `"fingerprint"`,
+    so the only route to this shape is a hand-edited or merge-corrupted
+    `tests/cassettes/*.json` file.
+    """
+    hybrid = replay.from_interactions(
+        [
+            {
+                "fingerprint": "deadbeefdeadbeef",  # deliberately wrong
+                "raises": "APITimeoutError",
+                "synthetic": "x" * replay.MIN_SYNTHETIC_REASON,
+                "response": {},
+            }
+        ],
+        name="hybrid-fingerprint-and-raises",
+    )
+    try:
+        hybrid.chat.completions.create(
+            model="a-different-model-than-was-recorded", messages=[]
+        )
+    except replay.CassetteMismatch as exc:
+        assert "ambiguous" in str(exc).lower()
+    else:
+        raise AssertionError(
+            "an interaction carrying 'raises' alongside 'fingerprint' raised "
+            "the named exception with no fingerprint check at all — a stray "
+            "'raises' field permanently disabled drift detection on a "
+            "genuine recording"
+        )
+
+
+def test_a_raises_interaction_still_needs_a_substantive_synthetic_reason() -> None:
+    """The reason-length check used to never apply to `raises` at all.
+
+    `_next()` acted on `"raises"` before the `"synthetic"` reason-length
+    check could run, so a cassette carrying `"raises"` with no `"synthetic"`
+    key, or too thin a one, raised the named exception unchecked — the
+    exact "inconvenient mismatch gets silenced instead of explained" outcome
+    this file's own docstrings describe, just reached through a second key.
+    """
+    hybrid = replay.from_interactions(
+        [{"raises": "APITimeoutError", "synthetic": "too short", "response": {}}],
+        name="raises-with-thin-reason",
+    )
+    try:
+        hybrid.chat.completions.create(model="m", messages=[])
+    except replay.CassetteMismatch as exc:
+        assert "must be a string of at least" in str(exc)
+    else:
+        raise AssertionError(
+            "a 'raises' interaction with a reason far shorter than "
+            "MIN_SYNTHETIC_REASON raised the named exception with no "
+            "length check at all"
+        )
+
+
 def test_asking_for_more_calls_than_recorded_fails() -> None:
     """Covers the other direction: the code grew a call the recording lacks.
 

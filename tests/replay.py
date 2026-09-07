@@ -171,39 +171,52 @@ class ReplayClient:
         interaction = self._interactions[self.index]
         self.index += 1
 
-        raises = interaction.get("raises")
-        if raises:
-            raise _exception_named(raises)
-
-        if "synthetic" in interaction:
+        # "synthetic" and "raises" are both escape hatches from the
+        # fingerprint check, and both must be validated before either takes
+        # effect — not just "synthetic". `raises` used to be checked and
+        # acted on first, unconditionally, which meant an interaction
+        # carrying `"raises"` skipped every check below: the ambiguity
+        # check against a stray "fingerprint" key, and the reason-length
+        # check that keeps "this could not be recorded" honest. Reproduced
+        # before this fix: `{"raises": "APITimeoutError", "fingerprint":
+        # "<stale>", "response": {}}` raised the named exception with no
+        # `CassetteMismatch` at all, exactly the "recorded test that passes
+        # against a stale recording" failure mode this whole file exists to
+        # prevent — just reached through "raises" instead of "synthetic".
+        escape_hatch_keys = [k for k in ("synthetic", "raises") if k in interaction]
+        if escape_hatch_keys:
             # Enforced here, at the point every interaction is actually
-            # consumed — not only at construction in `_synthetic()`, which a
-            # committed `tests/cassettes/*.json` file never goes through.
-            # `{"synthetic": ""}` in a cassette used to disable this
+            # consumed — not only at construction in `_synthetic()`/`_raises()`,
+            # which a committed `tests/cassettes/*.json` file never goes
+            # through. `{"synthetic": ""}` in a cassette used to disable this
             # interaction's fingerprint check permanently and silently; this
             # is the one place that reaches every interaction regardless of
             # where it came from.
             if "fingerprint" in interaction:
-                # Both keys present is not "prefer one" — it is ambiguous,
-                # and the ambiguity is exactly the shape a hand-edited or
-                # merge-corrupted cassette produces: a genuinely recorded
-                # interaction (which has "fingerprint") that also happens to
-                # carry a "synthetic"-named field (a stray note, a bad
-                # merge). The length check alone does not catch this,
-                # because it never asks whether "fingerprint" is also there —
-                # a real recording with an incidental 40-character "synthetic"
+                # Any escape-hatch key present is not "prefer one" — it is
+                # ambiguous, and the ambiguity is exactly the shape a
+                # hand-edited or merge-corrupted cassette produces: a
+                # genuinely recorded interaction (which has "fingerprint")
+                # that also happens to carry a "synthetic"- or
+                # "raises"-named field (a stray note, a bad merge). The
+                # length check alone does not catch this, because it never
+                # asks whether "fingerprint" is also there — a real
+                # recording with an incidental 40-character "synthetic"
                 # value would have its fingerprint check silently skipped
                 # forever. Neither construction path in this project
-                # (`_synthetic()`, `RecordingClient`) ever produces both
-                # keys on one interaction, so this is fail-closed against a
-                # shape nothing legitimate creates.
+                # (`_synthetic()`, `_raises()`, `RecordingClient`) ever
+                # produces "fingerprint" alongside either of the other two,
+                # so this is fail-closed against a shape nothing legitimate
+                # creates.
                 raise CassetteMismatch(
                     f"cassette {self._name!r} interaction {self.index} has "
-                    "both 'synthetic' and 'fingerprint' — that is ambiguous, "
-                    "not synthetic. A genuine recording never carries "
-                    "'synthetic', so this is most likely a hand-edited or "
-                    "merge-corrupted cassette. Remove whichever key does not "
-                    "belong rather than relying on one silently winning."
+                    f"{' and '.join(repr(k) for k in escape_hatch_keys)} "
+                    "together with 'fingerprint' — that is ambiguous, not "
+                    "synthetic. A genuine recording never carries "
+                    "'synthetic' or 'raises', so this is most likely a "
+                    "hand-edited or merge-corrupted cassette. Remove "
+                    "whichever key does not belong rather than relying on "
+                    "one silently winning."
                 )
             reason = interaction.get("synthetic")
             if not isinstance(reason, str) or len(reason) < MIN_SYNTHETIC_REASON:
@@ -211,11 +224,15 @@ class ReplayClient:
                     f"cassette {self._name!r} interaction {self.index}: "
                     f"'synthetic' must be a string of at least "
                     f"{MIN_SYNTHETIC_REASON} characters saying why this could "
-                    f"not be recorded; got {reason!r}. A synthetic interaction "
-                    "skips the fingerprint check entirely, so a reason this "
-                    "thin — or missing, or non-string — is how an inconvenient "
-                    "mismatch gets silenced instead of explained."
+                    f"not be recorded; got {reason!r}. A synthetic or "
+                    "raises interaction skips the fingerprint check "
+                    "entirely, so a reason this thin — or missing, or "
+                    "non-string — is how an inconvenient mismatch gets "
+                    "silenced instead of explained."
                 )
+            raises = interaction.get("raises")
+            if raises:
+                raise _exception_named(raises)
         else:
             actual = fingerprint(kwargs)
             expected = interaction["fingerprint"]
