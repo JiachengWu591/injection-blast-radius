@@ -134,9 +134,9 @@ def _publish(
     `issue_id` is scanned with `scan_entropy=False` — regex patterns only.
     This is a partial defence and `audit_output`'s own docstring says so,
     with the measurements behind it: entropy scanning cannot reliably tell
-    an ordinary hyphenated issue id from a same-length random secret (a
-    genuinely random 20-character secret can score *lower* than an entirely
-    ordinary slug), so running it here would routinely block completely
+    an ordinary hyphenated issue id from a random secret (a genuinely random
+    20-character secret can score *lower* than an entirely ordinary,
+    longer slug), so running it here would routinely block completely
     ordinary ids without reliably catching a real one either. What this
     catches is an id shaped like one of the known regex patterns; an
     arbitrary high-entropy id that matches none of them still passes,

@@ -97,8 +97,11 @@ def audit_output(text: str, *, scan_entropy: bool = True) -> OutputAuditResult:
     `Issue.__post_init__`'s charset restriction (`[A-Za-z0-9._-]{1,64}`)
     constrains which characters may appear and how long the id may be, not
     how random it is, so a purely random id built entirely from that
-    charset (a hex token, a base64url token, a JWT — all realistic secret
-    shapes) satisfies it trivially. There is no backstop for that residual
+    charset and short enough to fit (a 64-character hex digest, a 43-character
+    base64url-encoded 32-byte token — the 64-character cap is real, so not
+    every secret shape fits under it; a signed JWT, for one, does not:
+    checked directly, even a stripped-down one runs past 64 characters)
+    satisfies it trivially. There is no backstop for that residual
     case; it is accepted, not covered, exactly like this module's own
     opening lines already say about the whole approach: pattern matching
     "can be evaded by anything that doesn't look like the patterns." This is

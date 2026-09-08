@@ -29,11 +29,12 @@ _REQUIRED_FIELDS = ("issue_id", "title", "author", "body")
 # reason running entropy detection on an ordinary long issue id is not safe
 # to do. This charset restriction does not close that gap: it bounds which
 # characters an id may contain and how long it may be, nothing about how
-# random it is, so a purely random id built entirely from this charset (a
-# hex token, a base64url token, a JWT) satisfies it as easily as an
-# ordinary slug does and reaches either published surface just as
-# unaudited as before `_publish`/`_add_label` existed. That residual case
-# is accepted, not covered by anything in this project.
+# random it is, so a purely random id built entirely from this charset and
+# short enough to fit under the 64-character cap (a hex digest, a
+# base64url-encoded token) satisfies it as easily as an ordinary slug does
+# and reaches either published surface just as unaudited as before
+# `_publish`/`_add_label` existed. That residual case is accepted, not
+# covered by anything in this project.
 #
 # So it is constrained here rather than in `parse_issue`. A source is anything
 # that returns an `Issue` — ARCHITECTURE.md invites a webhook source that
