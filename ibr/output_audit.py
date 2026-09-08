@@ -71,31 +71,40 @@ def audit_output(text: str, *, scan_entropy: bool = True) -> OutputAuditResult:
     influenced. `ibr/executor.py` uses it for `issue_id`, which *is*
     attacker-shaped free text (`ibr/issues.py`'s own docstring says so): the
     entropy heuristic's "any 20+-character token with high enough per-
-    character entropy is suspicious" rule cannot distinguish an ordinary
-    hyphenated identifier from a random secret of similar length. Measured
-    directly: `PROJ-1234-fix-the-login-bug`, an entirely realistic issue-
-    tracker slug, comes back at 4.18 bits/char; a 20-character genuinely
-    random alphanumeric secret comes back at 4.22 — the two distributions
-    overlap enough that no threshold cleanly separates them, and raising the
-    bar to avoid the false positive would just as reliably let a same-length
-    real secret through unflagged. Given that overlap, running the entropy
-    scan on `issue_id` would routinely block entirely ordinary long ids
-    (over-blocking, an availability cost) without reliably catching a
-    genuinely random one anyway (under-detecting, the actual risk) — neither
-    side of that trade is a win.
+    character entropy is suspicious" rule cannot reliably distinguish an
+    ordinary hyphenated identifier from a random secret of similar length —
+    their distributions genuinely overlap, not just at the edges. Measured
+    directly, one concrete pair rather than an abstract claim:
+    `JEEoQEpeIEJKMxIp2a2J`, a genuinely random 20-character secret, comes
+    back at 3.38 bits/char; `PROJ-1234-fix-the-login-bug`, an entirely
+    ordinary issue-tracker slug, comes back at 4.18 — *higher* than the real
+    secret. Any threshold that lets the slug through also lets that secret
+    through; any threshold that catches the secret also blocks the slug.
+    That is not cherry-picked: sampling several thousand random 20-32
+    character secrets against a handful of ordinary slugs the same way
+    consistently produces overlap of this kind, not a rare coincidence.
+    Given that, running the entropy scan on `issue_id` would routinely block
+    entirely ordinary long ids (over-blocking, an availability cost) without
+    reliably catching a genuinely random one anyway (under-detecting, the
+    actual risk) — neither side of that trade is a win.
 
     So `scan_entropy=False` for `issue_id` is a disclosed, partial defence,
     not a complete one: it catches an id shaped like one of the regex
     patterns above (an AWS-style key id, an `sk-`-prefixed token, and so on),
     which is a real, verified improvement over auditing `issue_id` not at
     all. It does **not** catch an arbitrary high-entropy id that matches none
-    of those shapes — for that, the structural mitigation is still
-    `Issue.__post_init__`'s charset restriction
-    (`[A-Za-z0-9._-]{1,64}`), same as it was before this function ever looked
-    at `issue_id` at all. This module's own opening lines already say the
-    same thing about the whole approach: pattern matching "can be evaded by
-    anything that doesn't look like the patterns." This is that limitation,
-    stated for one specific caller rather than left implicit.
+    of those shapes, and nothing else in this project catches it either —
+    `Issue.__post_init__`'s charset restriction (`[A-Za-z0-9._-]{1,64}`)
+    constrains which characters may appear and how long the id may be, not
+    how random it is, so a purely random id built entirely from that
+    charset (a hex token, a base64url token, a JWT — all realistic secret
+    shapes) satisfies it trivially. There is no backstop for that residual
+    case; it is accepted, not covered, exactly like this module's own
+    opening lines already say about the whole approach: pattern matching
+    "can be evaded by anything that doesn't look like the patterns." This is
+    that limitation, stated for one specific caller rather than left
+    implicit — not a claim that something else quietly catches what this
+    scan does not.
     """
     findings: list[str] = []
 

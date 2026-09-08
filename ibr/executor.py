@@ -45,16 +45,20 @@ from .sinks import DEFAULT_SINK, ActionSink
 # framing carries `issue_id`: `SandboxActionSink` writes
 # `comment on issue #{issue_id}` above the body and `issue #{issue_id}:
 # {label}` for a label. So the byte set below is closed, but the *published
-# line* is not, and `Issue.__post_init__`'s charset restriction
-# (`[A-Za-z0-9._-]{1,64}`) admits some secret-shaped strings outright (an AWS
-# access key id is exactly `AKIA` plus 16 uppercase-alphanumeric characters —
-# entirely within that charset). `_publish` and `_add_label` below also audit
+# line* is not: `Issue.__post_init__`'s charset restriction
+# (`[A-Za-z0-9._-]{1,64}`) bounds which characters may appear and how long
+# the id may be, nothing about how random it is, so it admits some
+# secret-shaped strings outright — not just the obvious ones like an AWS
+# access key id (`AKIA` plus 16 uppercase-alphanumeric characters, entirely
+# within that charset), but an arbitrary random token built from the same
+# charset just as easily. `_publish` and `_add_label` below also audit
 # `issue_id`, regex patterns only (see `audit_output`'s `scan_entropy`
-# parameter for why), for that reason: not because the template can carry
-# model output (it cannot), but because the id sitting next to it in the
-# same published line can, and it is worth catching the id shapes a regex
-# can name even though the charset restriction remains the only backstop for
-# an arbitrary one a regex cannot.
+# parameter for the measurements behind that choice), for that reason: not
+# because the template can carry model output (it cannot), but because the
+# id sitting next to it in the same published line can. That scan catches
+# the id shapes a regex can name; a high-entropy id that matches none of
+# them is not caught by this or anything else — the charset restriction
+# does not backstop that case, it just happens not to rule it out either.
 COMMENT_TEMPLATES: dict[str, str] = {
     "bug": (
         "Thanks for the report — this has been triaged as a **bug** and queued "
@@ -128,15 +132,19 @@ def _publish(
     check existed.
 
     `issue_id` is scanned with `scan_entropy=False` — regex patterns only.
-    This is a partial defence and `audit_output`'s own docstring says so:
-    entropy scanning cannot tell an ordinary hyphenated issue id from a
-    same-length random secret (measured, they overlap), so running it here
-    would routinely block completely ordinary ids without reliably catching
-    a real one either. What this catches is an id shaped like one of the
-    known regex patterns; an arbitrary high-entropy id that matches none of
-    them still passes, exactly as it did before this function existed — the
-    charset restriction on `Issue.__post_init__` remains the structural
-    backstop for that residual case, not this scan.
+    This is a partial defence and `audit_output`'s own docstring says so,
+    with the measurements behind it: entropy scanning cannot reliably tell
+    an ordinary hyphenated issue id from a same-length random secret (a
+    genuinely random 20-character secret can score *lower* than an entirely
+    ordinary slug), so running it here would routinely block completely
+    ordinary ids without reliably catching a real one either. What this
+    catches is an id shaped like one of the known regex patterns; an
+    arbitrary high-entropy id that matches none of them still passes,
+    exactly as it did before this function existed. Nothing backstops that
+    residual case — `Issue.__post_init__`'s charset restriction bounds
+    which characters an id may contain, not how random it is, so it does
+    not rule out a purely random id built from that same charset. This is
+    an accepted gap, not a covered one.
     """
     body_verdict = audit_output(body)
     id_verdict = audit_output(issue_id, scan_entropy=False)

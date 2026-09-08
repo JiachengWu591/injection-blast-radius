@@ -126,7 +126,7 @@ That's the actual claim: a fully captured Reader gets to choose among four
 predefined actions, and that set doesn't grow when the attacker gets smarter.
 
 Point at the code while saying it —
-[`ibr/executor.py:193`](ibr/executor.py#L193) for the `match`,
+[`ibr/executor.py:201`](ibr/executor.py#L201) for the `match`,
 [`ibr/pipeline.py:464`](ibr/pipeline.py#L464) for the crossing point.
 
 If you want the strongest version of the claim, run it with no network at all:

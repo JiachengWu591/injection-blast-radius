@@ -392,10 +392,11 @@ def test_the_issue_id_is_constrained_because_it_reaches_published_output() -> No
     never reaches a published action. `issue_id` does: `SandboxActionSink`
     writes it into the comment header and into every label line. Both paths
     are also regex-scanned by `ibr/executor.py`'s `_publish`/`_add_label` now,
-    but only for known secret shapes, not by entropy — an arbitrary
-    high-entropy id would still reach either published file with nothing
-    between it and this charset restriction, which is why the restriction
-    exists independently of that scan rather than because of it.
+    but only for known secret shapes, not by entropy — and this charset
+    restriction does not fill that gap either: it bounds which characters
+    and how many, not how random the id is, so an arbitrary high-entropy id
+    built from this same charset reaches either published file exactly as
+    unaudited as before either check existed.
 
     Enforced on the frozen dataclass rather than in `parse_issue`, because a
     source is anything that returns an `Issue`: ARCHITECTURE.md invites a

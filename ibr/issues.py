@@ -25,11 +25,15 @@ _REQUIRED_FIELDS = ("issue_id", "title", "author", "body")
 # `_publish`/`_add_label` do audit `issue_id` before either sink call now (a
 # self-review round found the id reaching both surfaces unaudited and added
 # this), but only against the known secret-shape regexes, not the entropy
-# heuristic — see `audit_output`'s `scan_entropy` parameter for why running
-# entropy detection on an ordinary long issue id is not safe to do. So this
-# charset restriction remains the structural backstop, not a redundant one:
-# it is still what stands between an arbitrary secret-shaped id and either
-# published surface, for whatever shape the regex patterns do not name.
+# heuristic — see `audit_output`'s `scan_entropy` parameter for the measured
+# reason running entropy detection on an ordinary long issue id is not safe
+# to do. This charset restriction does not close that gap: it bounds which
+# characters an id may contain and how long it may be, nothing about how
+# random it is, so a purely random id built entirely from this charset (a
+# hex token, a base64url token, a JWT) satisfies it as easily as an
+# ordinary slug does and reaches either published surface just as
+# unaudited as before `_publish`/`_add_label` existed. That residual case
+# is accepted, not covered by anything in this project.
 #
 # So it is constrained here rather than in `parse_issue`. A source is anything
 # that returns an `Issue` — ARCHITECTURE.md invites a webhook source that
