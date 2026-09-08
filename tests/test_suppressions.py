@@ -60,16 +60,17 @@ REGISTERED: dict[tuple[str, str], tuple[int, str]] = {
     ),
     ("ibr/pipeline.py", "attr-defined"): (
         1,
-        "run_isolated's execute() call can raise DanglingIntent (or any other "
-        "exception) after real, billed audit/Reader tokens already sit in the "
-        "local PipelineResult -- ibr/batch.py used to hardcode 0 tokens on that "
-        "failure path because the result was thrown away with the exception. "
-        "Fixed by attaching the partial result to the exception instance before "
+        "run_isolated's internal call can raise DanglingIntent, or anything "
+        "else the audit/Reader/Executor stages let through, after real, "
+        "billed audit/Reader tokens already sit in the local PipelineResult "
+        "-- ibr/batch.py used to hardcode 0 tokens on that failure path "
+        "because the result was thrown away with the exception. Fixed by "
+        "attaching the partial result to the exception instance before "
         "re-raising, which mypy cannot type: the exception's real type is "
-        "whatever execute() (or something it calls) actually raised, not one "
-        "this module controls, so there is no type to add a field to. The read "
-        "side (ibr/batch.py) uses getattr with a default instead, so it needs "
-        "no suppression of its own and degrades safely if nothing was attached.",
+        "whatever actually raised it, not one this module controls, so "
+        "there is no type to add a field to. The read side (ibr/batch.py) "
+        "uses getattr with a default instead, so it needs no suppression of "
+        "its own and degrades safely if nothing was attached.",
     ),
 }
 

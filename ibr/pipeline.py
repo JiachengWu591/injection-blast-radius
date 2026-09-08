@@ -248,46 +248,6 @@ def audit_only(
         )
 
 
-def _execute_tracking_partial_result(
-    issue_id: str,
-    reader_output: ReaderOutput | None,
-    *,
-    sink: ActionSink,
-    result: PipelineResult,
-) -> ExecutorDecision:
-    """Call `execute()`, attaching the run's already-accumulated spend to
-    whatever it lets escape.
-
-    By the time `execute()` runs, the audit call has always completed and the
-    Reader call usually has too — real, billed tokens already sit in
-    `result.stages`. `execute()` can still raise `DanglingIntent` (a dangling
-    intent needs a human, deliberately not caught here or anywhere in this
-    function — see `ibr/batch.py`'s module docstring on why that one error is
-    never silently retried). Before this helper existed, that exception
-    unwound the stack with `result` — and the real tokens it holds — thrown
-    away with it: `ibr/batch.py`'s `one()` had no way to recover them and
-    hardcoded `input_tokens=0, output_tokens=0` on the resulting failure
-    outcome, silently erasing genuine API spend from every cost total derived
-    from `BatchReport`. Reproduced before this fix: a resumed batch run that
-    re-encounters a dangling intent re-spends real audit and Reader tokens,
-    then reports $0 of spend for that issue.
-
-    An attribute set on the exception instance, not a typed field: the
-    exception's type is whatever `execute()` (or something it calls)
-    actually raised, not a type this module controls, so there is nothing to
-    add a dataclass field to. mypy correctly does not know arbitrary
-    exception instances carry this — see the registered suppression in
-    `tests/test_suppressions.py`. `getattr(exc, "partial_result", None)` on
-    the reading side (`ibr/batch.py`) needs no such suppression, since it
-    degrades to `None` instead of asserting the attribute exists.
-    """
-    try:
-        return execute(issue_id, reader_output, sink=sink)
-    except Exception as exc:
-        exc.partial_result = result  # type: ignore[attr-defined]
-        raise
-
-
 def run_isolated(
     issue: Issue,
     *,
@@ -324,8 +284,53 @@ def run_isolated(
     not reported as having modeled an attacker who "defeated" a layer that
     never flagged this input in the first place.
     """
-    client = client or build_client()
     result = PipelineResult(issue_id=issue.issue_id)
+    try:
+        return _run_isolated(
+            issue,
+            result,
+            client=client,
+            audit_model=audit_model,
+            reader_model=reader_model,
+            simulate_audit_bypass=simulate_audit_bypass,
+            sink=sink,
+        )
+    except Exception as exc:
+        # Any exception past this point means at least the audit call, and
+        # often the Reader call too, already ran and billed real tokens into
+        # `result.stages`. A narrower version of this fix — wrapping only
+        # the Executor's `execute()` calls, a self-review round earlier
+        # today — missed the case where the audit or Reader's own call
+        # raises something outside their existing, deliberately narrow
+        # `except (StructuredOutputFailure, SchemaViolation, openai.APIError)`
+        # clauses: that lost whatever had already been billed just as
+        # completely as `execute()` raising `DanglingIntent` did, reproduced
+        # with a bare `RuntimeError` from the Reader call after the audit
+        # call had already billed real tokens. Wrapping the whole call here,
+        # once, closes both at the same time instead of chasing individual
+        # call sites. See `ibr/batch.py`'s `_tokens_already_spent` for the
+        # reading side — an attribute on the exception instance, not a typed
+        # field, since the exception's real type belongs to whatever
+        # actually raised it, not to this module.
+        exc.partial_result = result  # type: ignore[attr-defined]
+        raise
+
+
+def _run_isolated(
+    issue: Issue,
+    result: PipelineResult,
+    *,
+    client: openai.OpenAI | None,
+    audit_model: str,
+    reader_model: str,
+    simulate_audit_bypass: bool,
+    sink: ActionSink,
+) -> PipelineResult:
+    """The real pipeline logic, called from inside `run_isolated`'s
+    try/except so any exception raised here carries `result`'s
+    already-accumulated spend with it — see `run_isolated` for why.
+    """
+    client = client or build_client()
     untrusted = _issue_as_untrusted_input(issue)
 
     # --- Stage 1: security audit (probabilistic) ---------------------------
@@ -361,9 +366,7 @@ def run_isolated(
                 output_summary="(no valid output — failing closed to high_risk)",
             )
         )
-        result.decision = _execute_tracking_partial_result(
-            issue.issue_id, None, sink=sink, result=result
-        )
+        result.decision = execute(issue.issue_id, None, sink=sink)
         _emit_log(result)
         return result
 
@@ -403,9 +406,7 @@ def run_isolated(
                 output_summary="pipeline halted; nothing downstream ran",
             )
         )
-        result.decision = _execute_tracking_partial_result(
-            issue.issue_id, None, sink=sink, result=result
-        )
+        result.decision = execute(issue.issue_id, None, sink=sink)
         _emit_log(result)
         return result
 
@@ -478,9 +479,7 @@ def run_isolated(
                 output_summary="(no valid output — failing closed to no_action)",
             )
         )
-        result.decision = _execute_tracking_partial_result(
-            issue.issue_id, None, sink=sink, result=result
-        )
+        result.decision = execute(issue.issue_id, None, sink=sink)
         _emit_log(result)
         return result
 
@@ -541,9 +540,7 @@ def run_isolated(
 
     # --- Stage 3: Executor (trusted side) + Stage 4: output audit ----------
     started = time.perf_counter()
-    decision = _execute_tracking_partial_result(
-        issue.issue_id, reader_output, sink=sink, result=result
-    )
+    decision = execute(issue.issue_id, reader_output, sink=sink)
     result.decision = decision
     result.stages.append(
         StageRecord(

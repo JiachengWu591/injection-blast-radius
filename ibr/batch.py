@@ -168,17 +168,22 @@ class BatchReport:
 def _tokens_already_spent(exc: Exception) -> tuple[int, int]:
     """Real API spend `run_isolated` had already accumulated before `exc` escaped.
 
-    `ibr/pipeline.py`'s `_execute_tracking_partial_result` attaches the
-    partial `PipelineResult` to any exception `execute()` lets through (an
-    attribute set on the instance, not a typed field — the exception's type
-    belongs to whatever actually raised it, not to this module). By the time
-    that happens the audit call, and usually the Reader call too, have
-    already run and been billed: without this, `one()`'s failure branches
-    reported `0, 0` tokens for a run that had genuinely spent real money, and
+    `ibr/pipeline.py`'s `run_isolated` attaches the partial `PipelineResult`
+    to any exception its internal call lets through (an attribute set on
+    the instance, not a typed field — the exception's type belongs to
+    whatever actually raised it, not to this module). A first version of
+    that fix wrapped only the Executor's `execute()` calls and missed the
+    audit and Reader stages' own calls, which can raise something outside
+    their existing, deliberately narrow `except (StructuredOutputFailure,
+    SchemaViolation, openai.APIError)` clauses; `run_isolated` now wraps its
+    whole body once instead, so any escaping exception carries whatever was
+    already billed by that point — the audit call, and usually the Reader
+    call too. Without this, `one()`'s failure branches reported `0, 0`
+    tokens for a run that had genuinely spent real money, and
     `BatchReport.cost_usd()` undercounted every batch that resumed into a
     dangling intent. Falls back to `0, 0` when nothing was attached (an
-    exception raised before either LLM call, or from something that never
-    went through `run_isolated`).
+    exception raised before the first LLM call, or from something that
+    never went through `run_isolated`).
     """
     partial = getattr(exc, "partial_result", None)
     if partial is None:

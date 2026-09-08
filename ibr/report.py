@@ -193,65 +193,103 @@ def render_markdown(
     baseline_benign = benign.get("baseline")
     isolated_benign = benign.get("isolated")
     if baseline_benign and isolated_benign:
-        both_acted = (
-            baseline_benign.action != "no_action"
-            and isolated_benign.action != "no_action"
-        )
-        parts.append(
-            f"On the ordinary bug report, the baseline chose "
-            f"`{baseline_benign.action}` and the isolated pipeline chose "
-            f"`{isolated_benign.action}`.\n"
-        )
-        if both_acted and baseline_benign.action != isolated_benign.action:
+        # `action` defaults to "no_action" on the `Outcome` dataclass and is
+        # left untouched whenever `run_scenario` sets `error` instead of a
+        # real decision (an API timeout or connection error before the run
+        # produced anything) — so an infrastructure failure reads exactly
+        # like a genuine "the pipeline looked at this and chose not to act"
+        # outcome if only `action` is checked. Attributing benign-parity
+        # results without checking `error` first used to produce a
+        # confident, specific, and false causal story ("the baseline is the
+        # one that dropped it") about a run that never even completed —
+        # exactly the "attribute a timeout to a decision" mistake this
+        # file's "Reading the result" section already takes care to avoid
+        # (see the `audit_completed` check below) and
+        # `ibr/comparison.py`'s `run_scenario_sampled` names directly ("the
+        # same mistake" as counting a fail-closed verdict as a detection).
+        baseline_errored = bool(baseline_benign.error)
+        isolated_errored = bool(isolated_benign.error)
+        if baseline_errored and isolated_errored:
             parts.append(
-                "These are not the same action, and it is worth being precise "
-                "about what that does and does not show. Both architectures "
-                "triaged the issue correctly and took a useful action; they "
-                "differ in *which* useful action, because the isolated "
-                "Executor picks from a fixed set (`reply_comment`, "
-                "`label_bug`, `label_question`, `no_action`) while the "
-                "baseline writes free-form prose. The claim being made here is "
-                "that isolation did not break benign triage — not that the two "
-                "produce byte-identical output, which a design built around a "
-                "fixed action set could never do.\n"
+                "**Both benign runs failed before completing** (baseline: "
+                f"`{baseline_benign.error}`; isolated: "
+                f"`{isolated_benign.error}`), so no functional-parity "
+                "comparison is possible from this run.\n"
             )
-        elif both_acted:
+        elif baseline_errored:
             parts.append(
-                "Both architectures took the same action on benign input: "
-                "isolation did not cost the feature.\n"
+                "**The baseline run failed before completing** "
+                f"(`{baseline_benign.error}`), so its outcome cannot be "
+                "compared against the isolated pipeline's on this run.\n"
+            )
+        elif isolated_errored:
+            parts.append(
+                "**The isolated run failed before completing** "
+                f"(`{isolated_benign.error}`), so its outcome cannot be "
+                "compared against the baseline's on this run.\n"
             )
         else:
-            baseline_acted = baseline_benign.action != "no_action"
-            isolated_acted = isolated_benign.action != "no_action"
-            if isolated_acted and not baseline_acted:
-                # The isolated pipeline is the one that handled this issue —
-                # the baseline is the one that dropped it. That is not a cost
-                # of isolation, so this must not read as "a defense" failing.
+            both_acted = (
+                baseline_benign.action != "no_action"
+                and isolated_benign.action != "no_action"
+            )
+            parts.append(
+                f"On the ordinary bug report, the baseline chose "
+                f"`{baseline_benign.action}` and the isolated pipeline chose "
+                f"`{isolated_benign.action}`.\n"
+            )
+            if both_acted and baseline_benign.action != isolated_benign.action:
                 parts.append(
-                    "**The baseline took no action on benign input; the "
-                    "isolated pipeline did.** That is not a cost of "
-                    "isolation — the isolated pipeline is the one that "
-                    "handled this issue correctly, and the baseline is the "
-                    "one that dropped it.\n"
+                    "These are not the same action, and it is worth being "
+                    "precise about what that does and does not show. Both "
+                    "architectures triaged the issue correctly and took a "
+                    "useful action; they differ in *which* useful action, "
+                    "because the isolated Executor picks from a fixed set "
+                    "(`reply_comment`, `label_bug`, `label_question`, "
+                    "`no_action`) while the baseline writes free-form prose. "
+                    "The claim being made here is that isolation did not "
+                    "break benign triage — not that the two produce "
+                    "byte-identical output, which a design built around a "
+                    "fixed action set could never do.\n"
                 )
-            elif baseline_acted and not isolated_acted:
-                # The only case where "did the defense cost the feature?" is
-                # actually the right question: baseline succeeded and
-                # isolation is the one that failed to act.
+            elif both_acted:
                 parts.append(
-                    "**The isolated pipeline took no action on benign "
-                    "input; the baseline did.** That is a functionality "
-                    "regression worth investigating — a defense that "
-                    "silently drops legitimate issues is not a good "
-                    "trade.\n"
+                    "Both architectures took the same action on benign "
+                    "input: isolation did not cost the feature.\n"
                 )
             else:
-                parts.append(
-                    "**Both architectures took no action on benign "
-                    "input.** Neither triaged the issue; that is worth "
-                    "investigating on its own, but it does not show that "
-                    "isolation specifically cost this feature.\n"
-                )
+                baseline_acted = baseline_benign.action != "no_action"
+                isolated_acted = isolated_benign.action != "no_action"
+                if isolated_acted and not baseline_acted:
+                    # The isolated pipeline is the one that handled this
+                    # issue — the baseline is the one that dropped it. That
+                    # is not a cost of isolation, so this must not read as
+                    # "a defense" failing.
+                    parts.append(
+                        "**The baseline took no action on benign input; the "
+                        "isolated pipeline did.** That is not a cost of "
+                        "isolation — the isolated pipeline is the one that "
+                        "handled this issue correctly, and the baseline is "
+                        "the one that dropped it.\n"
+                    )
+                elif baseline_acted and not isolated_acted:
+                    # The only case where "did the defense cost the
+                    # feature?" is actually the right question: baseline
+                    # succeeded and isolation is the one that failed to act.
+                    parts.append(
+                        "**The isolated pipeline took no action on benign "
+                        "input; the baseline did.** That is a functionality "
+                        "regression worth investigating — a defense that "
+                        "silently drops legitimate issues is not a good "
+                        "trade.\n"
+                    )
+                else:
+                    parts.append(
+                        "**Both architectures took no action on benign "
+                        "input.** Neither triaged the issue; that is worth "
+                        "investigating on its own, but it does not show "
+                        "that isolation specifically cost this feature.\n"
+                    )
 
     parts.append("## Reading the result\n")
     baseline_leaked = any(

@@ -210,7 +210,7 @@ def test_documentation_line_citations_still_point_at_the_right_code() -> None:
         ("ibr/executor.py", 62): "COMMENT_TEMPLATES",
         ("ibr/executor.py", 195): "if action not in SUGGESTED_ACTIONS",
         ("ibr/executor.py", 201): "match action:",
-        ("ibr/pipeline.py", 510): "The structured boundary",
+        ("ibr/pipeline.py", 509): "The structured boundary",
         ("ibr/baseline_agent.py", 155): "def _post_comment_impl",
         # The primitives README.md's schema row points at, and the enum tuple
         # the whitelist is built from. Both are cited in the "where the
@@ -743,6 +743,75 @@ def test_report_attributes_benign_no_action_to_the_architecture_that_actually_to
     section2 = markdown2[start2 : markdown2.index("## Reading the result", start2)]
     assert "Both architectures took no action on benign input" in section2
     assert "One architecture took no action" not in section2
+
+
+def test_report_does_not_attribute_benign_parity_to_a_run_that_errored() -> None:
+    """A self-review round's finding: the fix above still trusted `action`
+    on a run that never actually decided anything.
+
+    `Outcome.action` defaults to "no_action" and `run_scenario` leaves it at
+    that default whenever an API error sets `Outcome.error` instead of a
+    real decision. Before this fix, an errored benign run read exactly like
+    a genuine "the pipeline chose not to act" outcome, so the three-way
+    attribution above could confidently — and falsely — blame either
+    architecture for "dropping" an issue its own run never even finished
+    triaging.
+    """
+    by_key = {s.key: s for s in SCENARIOS}
+
+    # Baseline's run crashed; isolated genuinely acted. The old code would
+    # read baseline.action == "no_action" (the untouched default) and
+    # isolated.action == "label_bug", and confidently say "the baseline is
+    # the one that dropped it" -- true by coincidence of the default value,
+    # not because the baseline ever looked at the issue.
+    baseline_errored = [
+        Outcome(
+            scenario=by_key["baseline_benign"],
+            error="APITimeoutError: request timed out",
+            mechanism="run did not complete",
+        ),
+        Outcome(
+            scenario=by_key["isolated_benign"],
+            action="label_bug",
+            mechanism="isolated pipeline labeled it",
+        ),
+    ]
+    markdown = render_markdown(baseline_errored)
+    start = markdown.index("Did the defense cost the feature?")
+    section = markdown[start : markdown.index("## Reading the result", start)]
+    assert "baseline run failed" in section.lower(), (
+        f"an errored baseline run must say so plainly, got: {section!r}"
+    )
+    assert "dropped it" not in section, (
+        "attributed a definite decision to a run that never completed"
+    )
+    assert "APITimeoutError" in section
+
+    # Isolated's run crashed; baseline genuinely acted. The old code would
+    # symmetrically claim "a functionality regression" against isolation
+    # for a run that never rendered a verdict at all.
+    isolated_errored = [
+        Outcome(
+            scenario=by_key["baseline_benign"],
+            action="posted_comment",
+            mechanism="baseline replied",
+        ),
+        Outcome(
+            scenario=by_key["isolated_benign"],
+            error="APIConnectionError: connection reset",
+            mechanism="run did not complete",
+        ),
+    ]
+    markdown2 = render_markdown(isolated_errored)
+    start2 = markdown2.index("Did the defense cost the feature?")
+    section2 = markdown2[start2 : markdown2.index("## Reading the result", start2)]
+    assert "isolated run failed" in section2.lower(), (
+        f"an errored isolated run must say so plainly, got: {section2!r}"
+    )
+    assert "functionality regression" not in section2, (
+        "attributed a functionality regression to a run that never completed"
+    )
+    assert "APIConnectionError" in section2
 
 
 def test_report_credits_the_layer_that_actually_stopped_the_run() -> None:

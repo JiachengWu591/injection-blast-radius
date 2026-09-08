@@ -693,6 +693,99 @@ def test_a_resumed_dangling_intent_does_not_erase_the_tokens_it_really_spent() -
     )
 
 
+class _RaisesOnCallNumber:
+    """Wraps a real client; the Nth call raises a bare exception instead of
+    forwarding to it.
+
+    Simulates an unanticipated exception type that the audit/Reader stage's
+    own narrow `except (StructuredOutputFailure, SchemaViolation,
+    openai.APIError)` clause does not catch -- something a synthetic
+    `"raises"` cassette interaction cannot reproduce, since
+    `tests/replay.py`'s `_exception_named` only builds real `openai.APIError`
+    subclasses (exactly the type that clause already handles).
+    """
+
+    def __init__(self, inner: Any, *, raise_on_call: int, exc: Exception) -> None:
+        self._inner = inner
+        self._raise_on_call = raise_on_call
+        self._exc = exc
+        self.calls = 0
+        self.chat = self
+
+    @property
+    def completions(self) -> Any:
+        return self
+
+    def create(self, **kwargs: Any) -> Any:
+        self.calls += 1
+        if self.calls == self._raise_on_call:
+            raise self._exc
+        return self._inner.chat.completions.create(**kwargs)
+
+
+def test_an_unanticipated_reader_exception_does_not_erase_the_audits_tokens() -> None:
+    """A self-review round's finding: the fix above was too narrow.
+
+    The first version of the token-preservation fix wrapped only
+    `ibr/executor.py`'s `execute()` calls -- it missed the audit and Reader
+    stages' own `call_structured_tool` calls, which can raise something
+    other than `StructuredOutputFailure`, `SchemaViolation`, or
+    `openai.APIError` (their only caught types). Reproduced before this
+    fix: the audit call succeeds and bills 500/120 tokens, then the Reader
+    call raises a bare `RuntimeError` -- outside `run_isolated`'s stage-2
+    except clause entirely, so it used to propagate with the audit's
+    already-billed tokens thrown away, exactly like the `DanglingIntent`
+    case above, just from a different call site. `run_isolated` now wraps
+    its whole body once, rather than each call site individually, so this
+    and the dangling-intent case are both covered by the same fix.
+    """
+    issue = _issue("b-unanticipated")
+    audit_call = _tool_response_with_usage(
+        "report_security_assessment",
+        '{"reasoning": "looks ordinary", "risk_level": "safe", '
+        '"matched_patterns": []}',
+        input_tokens=500,
+        output_tokens=120,
+    )
+    audit_only_client = replay.from_interactions(
+        [
+            {
+                "synthetic": (
+                    "a specific, real token-usage figure the live model "
+                    "cannot be asked to reproduce on demand"
+                ),
+                "response": audit_call,
+            }
+        ],
+        name="audit_only_before_unanticipated_reader_exception",
+    )
+    client = _RaisesOnCallNumber(
+        audit_only_client,
+        raise_on_call=2,
+        exc=RuntimeError("unanticipated internal error"),
+    )
+
+    report = run_batch(
+        [(issue, "plain")], sink=DryRunSink(), client=cast("Any", client), concurrency=1
+    )
+
+    assert len(report.outcomes) == 1
+    outcome = report.outcomes[0]
+    assert outcome.status == "failed"
+    assert outcome.error and "unanticipated internal error" in outcome.error
+    assert outcome.input_tokens == 500, (
+        f"the audit call really billed 500 input tokens before the Reader "
+        f"call raised, but only {outcome.input_tokens} were credited"
+    )
+    assert outcome.output_tokens == 120, (
+        f"the audit call really billed 120 output tokens before the Reader "
+        f"call raised, but only {outcome.output_tokens} were credited"
+    )
+    assert report.cost_usd(1.0, 1.0) > 0, (
+        "the audit's real spend must not be reported as free"
+    )
+
+
 def test_an_audit_outage_is_not_a_false_positive_candidate() -> None:
     """The third instance of the bug the module docstring already names twice.
 
