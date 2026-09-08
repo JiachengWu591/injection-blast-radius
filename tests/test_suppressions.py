@@ -58,6 +58,19 @@ REGISTERED: dict[tuple[str, str], tuple[int, str]] = {
         "the Issue arrives typed as `object`. Narrow, local, and the value is "
         "immediately passed to a function that does type-check its parameter.",
     ),
+    ("ibr/pipeline.py", "attr-defined"): (
+        1,
+        "run_isolated's execute() call can raise DanglingIntent (or any other "
+        "exception) after real, billed audit/Reader tokens already sit in the "
+        "local PipelineResult -- ibr/batch.py used to hardcode 0 tokens on that "
+        "failure path because the result was thrown away with the exception. "
+        "Fixed by attaching the partial result to the exception instance before "
+        "re-raising, which mypy cannot type: the exception's real type is "
+        "whatever execute() (or something it calls) actually raised, not one "
+        "this module controls, so there is no type to add a field to. The read "
+        "side (ibr/batch.py) uses getattr with a default instead, so it needs "
+        "no suppression of its own and degrades safely if nothing was attached.",
+    ),
 }
 
 _DIRECTIVE_RE = re.compile(r"#\s*type:\s*ignore(?:\[([A-Za-z0-9\-,\s]*)\])?")

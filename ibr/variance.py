@@ -5,7 +5,7 @@ rested on having watched one payload draw `high_risk` three times and
 `suspicious` once — enough to know the verdict moves, not enough to say how
 much. This module samples the audit repeatedly on fixed inputs and reports
 rates with confidence intervals, which is the difference between "it varies"
-and "it lets 1 in 8 through, 95% CI [3%, 32%]".
+and "it lets 1 in 8 through, 95% CI [2.2%, 47.1%]".
 
 Two rates matter, and only measuring one of them would be misleading:
 

@@ -585,6 +585,114 @@ def test_an_error_is_a_third_status_not_a_quiet_no_action() -> None:
     assert report.acted == []
 
 
+def _tool_response_with_usage(
+    name: str, arguments: str, *, input_tokens: int, output_tokens: int
+) -> dict:
+    return {
+        "model": "synthetic",
+        "choices": [
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "c1",
+                            "type": "function",
+                            "function": {"name": name, "arguments": arguments},
+                        }
+                    ],
+                    "model_dump": {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": "c1",
+                                "type": "function",
+                                "function": {"name": name, "arguments": arguments},
+                            }
+                        ],
+                    },
+                }
+            }
+        ],
+        "usage": {"prompt_tokens": input_tokens, "completion_tokens": output_tokens},
+    }
+
+
+def test_a_resumed_dangling_intent_does_not_erase_the_tokens_it_really_spent() -> None:
+    """A self-review round's finding: real, billed spend must not become $0.
+
+    `run_isolated` always runs the audit call and then the Reader call
+    before `execute()` can raise `DanglingIntent` -- both calls genuinely
+    happen and are genuinely billed. Before this fix, `one()`'s
+    `except DanglingIntent` branch hardcoded `input_tokens=0,
+    output_tokens=0` regardless, so a batch resumed into a dangling intent
+    silently erased real API spend from `BatchReport.input_tokens`,
+    `.output_tokens`, and `.cost_usd()`. Reproduced here with a fake client
+    that reports 500/120 (audit) and 400/90 (reader) tokens, replaying
+    against a ledger pre-seeded with a dangling intent for the exact action
+    the reader's output would produce.
+    """
+    issue = _issue("b-dangling")
+    audit_call = _tool_response_with_usage(
+        "report_security_assessment",
+        '{"reasoning": "looks ordinary", "risk_level": "safe", '
+        '"matched_patterns": []}',
+        input_tokens=500,
+        output_tokens=120,
+    )
+    reader_call = _tool_response_with_usage(
+        "report_issue_triage",
+        '{"reasoning": "an ordinary bug report", "issue_type": "bug", '
+        '"summary": "s", "suggested_action": "reply_comment"}',
+        input_tokens=400,
+        output_tokens=90,
+    )
+    client = replay.from_interactions(
+        [
+            {
+                "synthetic": (
+                    "a specific, real token-usage figure the live model "
+                    "cannot be asked to reproduce on demand"
+                ),
+                "response": audit_call,
+            },
+            {
+                "synthetic": (
+                    "a specific, real token-usage figure the live model "
+                    "cannot be asked to reproduce on demand"
+                ),
+                "response": reader_call,
+            },
+        ],
+        name="dangling_intent_token_repro",
+    )
+
+    key = ActionKey.of("comment", issue.issue_id, COMMENT_TEMPLATES["bug"])
+    ledger = _fresh_ledger()
+    ledger.intend(key)  # notionally: an earlier run died between intent and confirm
+    sink = IdempotentSink(inner=DryRunSink(), ledger=ledger)
+
+    report = run_batch([(issue, "plain")], sink=sink, client=client, concurrency=1)
+
+    assert len(report.outcomes) == 1
+    outcome = report.outcomes[0]
+    assert outcome.status == "failed"
+    assert outcome.error and "dangling intent" in outcome.error
+    assert outcome.input_tokens == 500 + 400, (
+        f"the audit (500) and Reader (400) calls really happened but only "
+        f"{outcome.input_tokens} input tokens were credited"
+    )
+    assert outcome.output_tokens == 120 + 90, (
+        f"the audit (120) and Reader (90) calls really happened but only "
+        f"{outcome.output_tokens} output tokens were credited"
+    )
+    assert report.input_tokens == 900
+    assert report.output_tokens == 210
+    assert report.cost_usd(1.0, 1.0) > 0, (
+        "real API spend must not be reported as free"
+    )
+
+
 def test_an_audit_outage_is_not_a_false_positive_candidate() -> None:
     """The third instance of the bug the module docstring already names twice.
 

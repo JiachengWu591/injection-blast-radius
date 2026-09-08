@@ -221,11 +221,37 @@ def render_markdown(
                 "isolation did not cost the feature.\n"
             )
         else:
-            parts.append(
-                "**One architecture took no action on benign input.** That is "
-                "a functionality regression worth investigating — a defense "
-                "that silently drops legitimate issues is not a good trade.\n"
-            )
+            baseline_acted = baseline_benign.action != "no_action"
+            isolated_acted = isolated_benign.action != "no_action"
+            if isolated_acted and not baseline_acted:
+                # The isolated pipeline is the one that handled this issue —
+                # the baseline is the one that dropped it. That is not a cost
+                # of isolation, so this must not read as "a defense" failing.
+                parts.append(
+                    "**The baseline took no action on benign input; the "
+                    "isolated pipeline did.** That is not a cost of "
+                    "isolation — the isolated pipeline is the one that "
+                    "handled this issue correctly, and the baseline is the "
+                    "one that dropped it.\n"
+                )
+            elif baseline_acted and not isolated_acted:
+                # The only case where "did the defense cost the feature?" is
+                # actually the right question: baseline succeeded and
+                # isolation is the one that failed to act.
+                parts.append(
+                    "**The isolated pipeline took no action on benign "
+                    "input; the baseline did.** That is a functionality "
+                    "regression worth investigating — a defense that "
+                    "silently drops legitimate issues is not a good "
+                    "trade.\n"
+                )
+            else:
+                parts.append(
+                    "**Both architectures took no action on benign "
+                    "input.** Neither triaged the issue; that is worth "
+                    "investigating on its own, but it does not show that "
+                    "isolation specifically cost this feature.\n"
+                )
 
     parts.append("## Reading the result\n")
     baseline_leaked = any(
@@ -261,6 +287,20 @@ def render_markdown(
                 "stops unsophisticated attacks, and a good enough attack gets "
                 "past it. If that were the only defense, the system would be "
                 "one clever rephrasing away from the baseline's outcome.\n\n"
+            )
+        elif ordinary_malicious is None:
+            # The ordinary, unbypassed isolated+malicious run is not among the
+            # outcomes handed to this report (a partial/filtered outcome
+            # list). Nothing here says whether the audit or the boundary
+            # stopped the attack, so say that plainly instead of asserting
+            # the "structured boundary contained it" narrative below about a
+            # run that was never represented.
+            parts.append(
+                "This report does not include a run of the ordinary, "
+                "unbypassed `isolated_malicious` scenario, so which layer — "
+                "the probabilistic security audit or the structured "
+                "boundary — actually stopped this particular attack cannot "
+                "be determined from the outcomes given here.\n\n"
             )
         elif ordinary_malicious and not ordinary_malicious.audit_completed:
             parts.append(

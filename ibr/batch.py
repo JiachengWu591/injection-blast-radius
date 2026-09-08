@@ -165,6 +165,30 @@ class BatchReport:
         )
 
 
+def _tokens_already_spent(exc: Exception) -> tuple[int, int]:
+    """Real API spend `run_isolated` had already accumulated before `exc` escaped.
+
+    `ibr/pipeline.py`'s `_execute_tracking_partial_result` attaches the
+    partial `PipelineResult` to any exception `execute()` lets through (an
+    attribute set on the instance, not a typed field — the exception's type
+    belongs to whatever actually raised it, not to this module). By the time
+    that happens the audit call, and usually the Reader call too, have
+    already run and been billed: without this, `one()`'s failure branches
+    reported `0, 0` tokens for a run that had genuinely spent real money, and
+    `BatchReport.cost_usd()` undercounted every batch that resumed into a
+    dangling intent. Falls back to `0, 0` when nothing was attached (an
+    exception raised before either LLM call, or from something that never
+    went through `run_isolated`).
+    """
+    partial = getattr(exc, "partial_result", None)
+    if partial is None:
+        return 0, 0
+    return (
+        sum(s.input_tokens for s in partial.stages),
+        sum(s.output_tokens for s in partial.stages),
+    )
+
+
 def _outcome_from(
     result: PipelineResult, issue: Issue, stratum: str, duration_ms: float
 ) -> IssueOutcome:
@@ -238,6 +262,7 @@ def run_batch(
             # The one error that must not be retried automatically. An action
             # was started and never confirmed, and only a person can look at
             # the destination and say which.
+            input_tokens, output_tokens = _tokens_already_spent(exc)
             return IssueOutcome(
                 issue_id=issue.issue_id,
                 status="failed",
@@ -245,11 +270,12 @@ def run_batch(
                 risk_level=None,
                 stratum=stratum,
                 duration_ms=(time.perf_counter() - started) * 1000,
-                input_tokens=0,
-                output_tokens=0,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 error=f"dangling intent, needs a human: {exc}",
             )
         except Exception as exc:  # noqa: BLE001 - one bad issue must not end the run
+            input_tokens, output_tokens = _tokens_already_spent(exc)
             return IssueOutcome(
                 issue_id=issue.issue_id,
                 status="failed",
@@ -257,8 +283,8 @@ def run_batch(
                 risk_level=None,
                 stratum=stratum,
                 duration_ms=(time.perf_counter() - started) * 1000,
-                input_tokens=0,
-                output_tokens=0,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 error=f"{type(exc).__name__}: {exc}",
             )
         return _outcome_from(

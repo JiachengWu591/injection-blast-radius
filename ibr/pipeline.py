@@ -248,6 +248,46 @@ def audit_only(
         )
 
 
+def _execute_tracking_partial_result(
+    issue_id: str,
+    reader_output: ReaderOutput | None,
+    *,
+    sink: ActionSink,
+    result: PipelineResult,
+) -> ExecutorDecision:
+    """Call `execute()`, attaching the run's already-accumulated spend to
+    whatever it lets escape.
+
+    By the time `execute()` runs, the audit call has always completed and the
+    Reader call usually has too — real, billed tokens already sit in
+    `result.stages`. `execute()` can still raise `DanglingIntent` (a dangling
+    intent needs a human, deliberately not caught here or anywhere in this
+    function — see `ibr/batch.py`'s module docstring on why that one error is
+    never silently retried). Before this helper existed, that exception
+    unwound the stack with `result` — and the real tokens it holds — thrown
+    away with it: `ibr/batch.py`'s `one()` had no way to recover them and
+    hardcoded `input_tokens=0, output_tokens=0` on the resulting failure
+    outcome, silently erasing genuine API spend from every cost total derived
+    from `BatchReport`. Reproduced before this fix: a resumed batch run that
+    re-encounters a dangling intent re-spends real audit and Reader tokens,
+    then reports $0 of spend for that issue.
+
+    An attribute set on the exception instance, not a typed field: the
+    exception's type is whatever `execute()` (or something it calls)
+    actually raised, not a type this module controls, so there is nothing to
+    add a dataclass field to. mypy correctly does not know arbitrary
+    exception instances carry this — see the registered suppression in
+    `tests/test_suppressions.py`. `getattr(exc, "partial_result", None)` on
+    the reading side (`ibr/batch.py`) needs no such suppression, since it
+    degrades to `None` instead of asserting the attribute exists.
+    """
+    try:
+        return execute(issue_id, reader_output, sink=sink)
+    except Exception as exc:
+        exc.partial_result = result  # type: ignore[attr-defined]
+        raise
+
+
 def run_isolated(
     issue: Issue,
     *,
@@ -321,7 +361,9 @@ def run_isolated(
                 output_summary="(no valid output — failing closed to high_risk)",
             )
         )
-        result.decision = execute(issue.issue_id, None, sink=sink)
+        result.decision = _execute_tracking_partial_result(
+            issue.issue_id, None, sink=sink, result=result
+        )
         _emit_log(result)
         return result
 
@@ -361,7 +403,9 @@ def run_isolated(
                 output_summary="pipeline halted; nothing downstream ran",
             )
         )
-        result.decision = execute(issue.issue_id, None, sink=sink)
+        result.decision = _execute_tracking_partial_result(
+            issue.issue_id, None, sink=sink, result=result
+        )
         _emit_log(result)
         return result
 
@@ -434,7 +478,9 @@ def run_isolated(
                 output_summary="(no valid output — failing closed to no_action)",
             )
         )
-        result.decision = execute(issue.issue_id, None, sink=sink)
+        result.decision = _execute_tracking_partial_result(
+            issue.issue_id, None, sink=sink, result=result
+        )
         _emit_log(result)
         return result
 
@@ -495,7 +541,9 @@ def run_isolated(
 
     # --- Stage 3: Executor (trusted side) + Stage 4: output audit ----------
     started = time.perf_counter()
-    decision = execute(issue.issue_id, reader_output, sink=sink)
+    decision = _execute_tracking_partial_result(
+        issue.issue_id, reader_output, sink=sink, result=result
+    )
     result.decision = decision
     result.stages.append(
         StageRecord(
