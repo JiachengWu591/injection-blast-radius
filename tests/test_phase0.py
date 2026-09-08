@@ -390,10 +390,12 @@ def test_the_issue_id_is_constrained_because_it_reaches_published_output() -> No
 
     `title` and `body` never leave the log, and the Reader's summary of them
     never reaches a published action. `issue_id` does: `SandboxActionSink`
-    writes it into the comment header and into every label line, and the output
-    audit runs on the comment *body* before that — so before this rule, the id
-    was text from outside reaching a published file with nothing between. On
-    the label path there is no output audit at all.
+    writes it into the comment header and into every label line. Both paths
+    are also regex-scanned by `ibr/executor.py`'s `_publish`/`_add_label` now,
+    but only for known secret shapes, not by entropy — an arbitrary
+    high-entropy id would still reach either published file with nothing
+    between it and this charset restriction, which is why the restriction
+    exists independently of that scan rather than because of it.
 
     Enforced on the frozen dataclass rather than in `parse_issue`, because a
     source is anything that returns an `Issue`: ARCHITECTURE.md invites a
@@ -471,8 +473,8 @@ def test_json_carries_a_newline_through_parse_issue_and_is_still_refused() -> No
         raise AssertionError(
             "parse_issue accepted an issue_id ending in a newline, which "
             "splits sandbox/labels.txt and sandbox/public_comments.txt into "
-            "two lines when the sink interpolates it — on the label path, "
-            "which the output audit never sees at all"
+            "two lines when the sink interpolates it — a format corruption "
+            "no regex or entropy scan is looking for"
         )
 
 
@@ -631,6 +633,15 @@ def test_missing_api_key_message_distinguishes_absent_from_blank() -> None:
             assert "is not set" not in str(exc), (
                 f"the key IS present in os.environ (just blank) but the "
                 f"message claims it is not set: {exc!r}"
+            )
+            # The opening clause saying "set but blank" and a later sentence
+            # still calling it "missing" is the same confusion relocated, not
+            # removed — a self-review round caught exactly that in the
+            # closing rationale sentence, copy-pasted unchanged from the
+            # absent-key message.
+            assert "missing" not in str(exc).lower(), (
+                f"the key IS present (just blank), but some other part of "
+                f"the message still calls it missing: {exc!r}"
             )
             assert not _has_real_looking_key(str(exc))
         else:

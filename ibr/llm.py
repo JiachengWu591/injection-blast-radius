@@ -109,7 +109,15 @@ def ping(model: str, *, client: openai.OpenAI | None = None) -> PingResult:
 
 
 class StructuredOutputFailure(RuntimeError):
-    """The model never produced a parseable tool call. Callers must fail closed."""
+    """The model's response could not be turned into what the caller needed.
+
+    Not only "no parseable tool call" any more: `ping()` also raises this for
+    an empty `choices` list, and `ping()`'s request carries no tools at all —
+    it is a plain completion, not a forced tool call. Both call sites share
+    the same shape of failure (a malformed or filtered response) and the same
+    obligation on the caller (fail closed), which is what this exception
+    exists to name; it does not claim a single mechanism behind every raise.
+    """
 
 
 @dataclass(frozen=True)

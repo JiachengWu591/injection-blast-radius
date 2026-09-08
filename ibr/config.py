@@ -104,6 +104,6 @@ def assert_api_key_present() -> None:
         raise MissingApiKey(
             f"{API_KEY_ENV_VAR} is set but blank. Put a real value in "
             f"{PROJECT_ROOT / '.env'} (copy .env.example) or export it in "
-            "your shell. Refusing to run: a missing key must stop the demo, "
+            "your shell. Refusing to run: a blank key must stop the demo, "
             "not silently downgrade it."
         )

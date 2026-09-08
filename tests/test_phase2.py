@@ -793,7 +793,22 @@ def live_test_malicious_issue_never_leaks_even_with_audit_bypassed() -> None:
     reset_labels()
     result = run_isolated(load_issue("malicious"), simulate_audit_bypass=True)
 
-    assert result.audit_bypass_simulated is True
+    assert result.audit is not None
+    # audit_bypass_simulated is only True when there was something to bypass
+    # -- the real verdict actually came back high_risk. This project's own
+    # docs document run-to-run variance on this exact fixture ("observed
+    # rating one payload high_risk three times and suspicious once"), so an
+    # unconditional assertion here would be a spurious live-test failure on
+    # a day the live audit rates it "suspicious" instead -- the same
+    # variance test_isolated_malicious_short_circuits_on_high_risk already
+    # guards against for the un-bypassed case.
+    if result.audit.risk_level == "high_risk":
+        assert result.audit_bypass_simulated is True
+    else:
+        assert result.audit_bypass_simulated is False, (
+            "nothing was bypassed (the real verdict was not high_risk), so "
+            "this must not read as a bypass"
+        )
     assert result.reader is not None, "the Reader should have run"
 
     published = sandbox_fs.read_text(PUBLIC_COMMENTS_PATH)

@@ -46,13 +46,15 @@ from .sinks import DEFAULT_SINK, ActionSink
 # `comment on issue #{issue_id}` above the body and `issue #{issue_id}:
 # {label}` for a label. So the byte set below is closed, but the *published
 # line* is not, and `Issue.__post_init__`'s charset restriction
-# (`[A-Za-z0-9._-]{1,64}`) is not narrow enough on its own to make it safe —
-# that charset fully admits secret-shaped strings (an AWS access key id is
-# exactly `AKIA` plus 16 uppercase-alphanumeric characters). `_publish` and
-# `_add_label` below audit `issue_id` together with what is about to be
-# published for that reason: not because the template can carry model output
-# (it cannot), but because the id sitting next to it in the same published
-# line can, and a charset check alone does not know what a secret looks like.
+# (`[A-Za-z0-9._-]{1,64}`) admits some secret-shaped strings outright (an AWS
+# access key id is exactly `AKIA` plus 16 uppercase-alphanumeric characters —
+# entirely within that charset). `_publish` and `_add_label` below also audit
+# `issue_id`, regex patterns only (see `audit_output`'s `scan_entropy`
+# parameter for why), for that reason: not because the template can carry
+# model output (it cannot), but because the id sitting next to it in the
+# same published line can, and it is worth catching the id shapes a regex
+# can name even though the charset restriction remains the only backstop for
+# an arbitrary one a regex cannot.
 COMMENT_TEMPLATES: dict[str, str] = {
     "bug": (
         "Thanks for the report — this has been triaged as a **bug** and queued "
@@ -120,21 +122,21 @@ def _publish(
     is already known clean — every concrete sink interpolates `issue_id`
     directly into the actual published line (see
     `SandboxActionSink.publish_comment`'s header), and that id is
-    attacker-influenced (`ibr/issues.py`'s own docstring says so) and not
-    constrained tightly enough to rule out a secret-shaped string. Auditing
-    the template alone let exactly that reach the public surface, unaudited,
-    before this check existed — reproduced by publishing an issue id shaped
-    like an AWS access key id and confirming the actual published line would
-    have tripped this same audit, had it run on it.
+    attacker-influenced (`ibr/issues.py`'s own docstring says so). Auditing
+    the template alone let an id shaped like a known secret pattern (an AWS
+    access key id, say) reach the public surface unaudited, before this
+    check existed.
 
-    `issue_id` is scanned with `scan_entropy=False`: the entropy heuristic
-    flags any long, varied-character token as suspicious, and an ordinary
-    hyphenated/underscored issue id is exactly that shape without being a
-    secret — concatenating it into one entropy scan with `body` produced
-    false positives on completely benign ids (reproduced against this
-    project's own attack corpus, whose test issue ids include one 22
-    characters long). The regex patterns are shape-specific enough to run on
-    `issue_id` directly without that problem.
+    `issue_id` is scanned with `scan_entropy=False` — regex patterns only.
+    This is a partial defence and `audit_output`'s own docstring says so:
+    entropy scanning cannot tell an ordinary hyphenated issue id from a
+    same-length random secret (measured, they overlap), so running it here
+    would routinely block completely ordinary ids without reliably catching
+    a real one either. What this catches is an id shaped like one of the
+    known regex patterns; an arbitrary high-entropy id that matches none of
+    them still passes, exactly as it did before this function existed — the
+    charset restriction on `Issue.__post_init__` remains the structural
+    backstop for that residual case, not this scan.
     """
     body_verdict = audit_output(body)
     id_verdict = audit_output(issue_id, scan_entropy=False)
@@ -154,7 +156,8 @@ def _add_label(
     not, and `SandboxActionSink.add_label` interpolates it directly into the
     published line exactly as `publish_comment` does — the same gap, on a
     path that previously called the sink with no audit whatsoever. See
-    `_publish` for why `issue_id` is scanned with `scan_entropy=False`.
+    `_publish` for why `issue_id` is scanned with `scan_entropy=False`, and
+    what that does and does not catch.
     """
     label_verdict = audit_output(label)
     id_verdict = audit_output(issue_id, scan_entropy=False)

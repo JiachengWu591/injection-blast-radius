@@ -511,17 +511,34 @@ def run_isolated(
         )
     )
     if decision.output_audit is not None:
+        # decision.output_audit is only ever non-None on the three arms that
+        # call an output-audit-backed helper in ibr/executor.py:
+        # reply_comment (_publish) and label_bug/label_question (_add_label).
+        # This block used to assume the first of those unconditionally --
+        # decision.published_comment is always None for a label action, so
+        # every successful label_bug/label_question run logged input
+        # "(nothing)" and output "published", indistinguishable from a real
+        # comment publication and wrong on both counts: a label was added
+        # (or blocked), nothing was published either way.
+        is_label_action = reader_output.suggested_action in (
+            "label_bug",
+            "label_question",
+        )
+        if is_label_action:
+            acted_on = ", ".join(decision.labels_added) or "(nothing)"
+            clean_summary, blocked_summary = "label added", "label blocked"
+        else:
+            acted_on = decision.published_comment or "(nothing)"
+            clean_summary, blocked_summary = "published", "publication blocked"
         result.stages.append(
             StageRecord(
                 stage="output_audit",
                 outcome="blocked" if decision.output_audit.blocked else "clean",
                 detail=decision.output_audit.summary,
                 duration_ms=0.0,
-                input_summary=summarize(decision.published_comment or "(nothing)"),
+                input_summary=summarize(acted_on),
                 output_summary=(
-                    "publication blocked"
-                    if decision.output_audit.blocked
-                    else "published"
+                    blocked_summary if decision.output_audit.blocked else clean_summary
                 ),
             )
         )

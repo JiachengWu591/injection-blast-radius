@@ -21,10 +21,15 @@ _REQUIRED_FIELDS = ("issue_id", "title", "author", "body")
 #
 # `title` and `body` never leave the log and the Reader's summary of them never
 # reaches a published action. `issue_id` does: `SandboxActionSink` interpolates
-# it into the comment header and into every label line, and the output audit
-# runs on the comment *body* before that, so the id is text from outside that
-# reaches a published file with nothing between. On the label path there is no
-# output audit at all, and the id is the whole variable part of the line.
+# it into the comment header and into every label line. `ibr/executor.py`'s
+# `_publish`/`_add_label` do audit `issue_id` before either sink call now (a
+# self-review round found the id reaching both surfaces unaudited and added
+# this), but only against the known secret-shape regexes, not the entropy
+# heuristic — see `audit_output`'s `scan_entropy` parameter for why running
+# entropy detection on an ordinary long issue id is not safe to do. So this
+# charset restriction remains the structural backstop, not a redundant one:
+# it is still what stands between an arbitrary secret-shaped id and either
+# published surface, for whatever shape the regex patterns do not name.
 #
 # So it is constrained here rather than in `parse_issue`. A source is anything
 # that returns an `Issue` — ARCHITECTURE.md invites a webhook source that
@@ -40,8 +45,8 @@ _REQUIRED_FIELDS = ("issue_id", "title", "author", "body")
 # constructs one: a single physical line becomes an `Issue` whose id, once
 # interpolated with nothing between it and the file, splits
 # `sandbox/labels.txt` and `sandbox/public_comments.txt` into two lines each —
-# on the label path, which the output audit never sees at all. `\Z` anchors at
-# the true end and admits no exception.
+# a format corruption no regex or entropy scan is looking for, on either
+# path. `\Z` anchors at the true end and admits no exception.
 _ISSUE_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}\Z")
 
 

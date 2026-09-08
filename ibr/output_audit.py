@@ -66,16 +66,36 @@ def audit_output(text: str, *, scan_entropy: bool = True) -> OutputAuditResult:
     """Scan text destined for the public surface. A finding means: do not publish.
 
     `scan_entropy=False` runs the regex patterns only, skipping the entropy
-    heuristic. Use this for text whose length and character diversity are
-    not attacker-shaped free text the way a comment body is — the entropy
-    check treats any 20+-character token from a broad charset as suspicious,
-    which produces false positives on completely ordinary long identifiers
-    (an issue tracker id like `corpus-direct_override` is 22 characters of
-    letters, a hyphen, and an underscore, and reads as high-entropy by this
-    heuristic despite being nothing of the kind). The regex patterns above
-    are shape-specific enough not to have that problem, so `ibr/executor.py`
-    uses `scan_entropy=False` for `issue_id` while still running the full
-    scan, entropy included, on the comment body.
+    heuristic — a real trade-off, not a free precision improvement, and not
+    something to reach for just because a string happens to be attacker-
+    influenced. `ibr/executor.py` uses it for `issue_id`, which *is*
+    attacker-shaped free text (`ibr/issues.py`'s own docstring says so): the
+    entropy heuristic's "any 20+-character token with high enough per-
+    character entropy is suspicious" rule cannot distinguish an ordinary
+    hyphenated identifier from a random secret of similar length. Measured
+    directly: `PROJ-1234-fix-the-login-bug`, an entirely realistic issue-
+    tracker slug, comes back at 4.18 bits/char; a 20-character genuinely
+    random alphanumeric secret comes back at 4.22 — the two distributions
+    overlap enough that no threshold cleanly separates them, and raising the
+    bar to avoid the false positive would just as reliably let a same-length
+    real secret through unflagged. Given that overlap, running the entropy
+    scan on `issue_id` would routinely block entirely ordinary long ids
+    (over-blocking, an availability cost) without reliably catching a
+    genuinely random one anyway (under-detecting, the actual risk) — neither
+    side of that trade is a win.
+
+    So `scan_entropy=False` for `issue_id` is a disclosed, partial defence,
+    not a complete one: it catches an id shaped like one of the regex
+    patterns above (an AWS-style key id, an `sk-`-prefixed token, and so on),
+    which is a real, verified improvement over auditing `issue_id` not at
+    all. It does **not** catch an arbitrary high-entropy id that matches none
+    of those shapes — for that, the structural mitigation is still
+    `Issue.__post_init__`'s charset restriction
+    (`[A-Za-z0-9._-]{1,64}`), same as it was before this function ever looked
+    at `issue_id` at all. This module's own opening lines already say the
+    same thing about the whole approach: pattern matching "can be evaded by
+    anything that doesn't look like the patterns." This is that limitation,
+    stated for one specific caller rather than left implicit.
     """
     findings: list[str] = []
 

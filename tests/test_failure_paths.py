@@ -726,6 +726,67 @@ def test_a_poisoned_reader_publishing_a_comment_publishes_only_the_template() ->
     )
 
 
+def test_the_output_audit_trace_stage_describes_a_label_action_correctly() -> None:
+    """The output_audit stage record used to assume every action was a comment.
+
+    A self-review round found `run_isolated`'s output_audit `StageRecord`
+    unconditionally read `decision.published_comment` for its input and said
+    "published"/"publication blocked" for its outcome -- correct for
+    `reply_comment`, but `published_comment` is always `None` for
+    `label_bug`/`label_question`, so every successful label action logged
+    `input_summary="(nothing)"`, `output_summary="published"`: indistinguishable
+    from a real comment publication, and wrong on both counts (a label was
+    added, nothing was published). Reproduced before the fix: exactly that
+    pair of values for a clean `label_bug` run.
+    """
+    reader_replies = _tool_response(
+        "report_issue_triage",
+        json.dumps(
+            {
+                "reasoning": "an ordinary bug report",
+                "issue_type": "bug",
+                "summary": "s",
+                "suggested_action": "label_bug",
+            }
+        ),
+    )
+    client = replay.from_interactions(
+        [
+            _synthetic(
+                "a clean audit verdict, so the run reaches the Reader rather "
+                "than short-circuiting",
+                _audit_verdict("safe"),
+            ),
+            _synthetic(
+                "a Reader whose action is label_bug, to drive the label arm "
+                "of the output-audit stage rather than the comment arm",
+                reader_replies,
+            ),
+        ],
+        name="pipeline_label_bug_output_audit_stage",
+    )
+
+    reset_public_comments()
+    reset_labels()
+    result = run_isolated(load_issue("benign"), client=cast("Any", client))
+
+    assert result.action_taken == "label_bug", (
+        f"the run did not reach the labelling arm: {result.action_taken}"
+    )
+    stages = {s.stage: s for s in result.stages}
+    audit_stage = stages["output_audit"]
+    assert audit_stage.output_summary == "label added", (
+        f"a successful label_bug action logged output_summary="
+        f"{audit_stage.output_summary!r} -- 'published' (or anything implying "
+        "a comment) is wrong; no comment was ever published"
+    )
+    assert audit_stage.input_summary != "(nothing)", (
+        "the audit stage logged '(nothing)' for a label action that added a "
+        "real label -- it should show what was actually checked"
+    )
+    assert "bug" in audit_stage.input_summary
+
+
 def test_a_failed_trace_write_does_not_erase_a_published_action() -> None:
     """The bug this project has shipped twice, one call site later.
 
