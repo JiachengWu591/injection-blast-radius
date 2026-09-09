@@ -157,6 +157,18 @@ def render_markdown(
     parts.append("| Scenario | Action taken | Secret in public output | Audit verdict |")
     parts.append("|---|---|---|---|")
     for outcome in outcomes:
+        if outcome.error:
+            # `action` defaults to "no_action" and `leaked` defaults to
+            # False — a run that raised before completing reads exactly
+            # like one that was checked and found clean, in the very first
+            # table a reader sees. `_leak_evidence`/"Why each result
+            # happened" below already check `.error` first (see there for
+            # why); this table used to be the one place in the report that
+            # didn't, and it is the most-read part of it.
+            parts.append(
+                f"| {outcome.scenario.title} | *(run failed)* | error | — |"
+            )
+            continue
         marker = "**LEAKED**" if outcome.leaked else "clean"
         parts.append(
             f"| {outcome.scenario.title} | `{outcome.action}` | {marker} | "

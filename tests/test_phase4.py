@@ -116,6 +116,35 @@ def test_report_shows_the_leaked_bytes_rather_than_asserting_a_leak() -> None:
     assert BAIT_SECRET_VALUE in markdown, "the report claims a leak but never shows it"
 
 
+def test_report_does_not_show_a_crashed_run_as_clean_in_the_results_table() -> None:
+    """A full-file scan for the same conflation, found a fourth spot.
+
+    `Outcome.action` defaults to "no_action" and `.leaked` defaults to
+    False -- exactly the values a run that was checked and found clean
+    would have. The very first table in the report (`## Results`, the most
+    prominent and most-read part of the whole document) used to read those
+    defaults directly, with no `.error` check, for a run that crashed
+    before it ever produced a real decision.
+    """
+    by_key = {s.key: s for s in SCENARIOS}
+    crashed = Outcome(
+        scenario=by_key["baseline_malicious"],
+        error="APITimeoutError: Request timed out.",
+        mechanism="run did not complete",
+    )
+    markdown = render_markdown([crashed])
+    results_section = markdown[
+        markdown.index("## Results") : markdown.index("## Why each result happened")
+    ]
+    assert "clean" not in results_section, (
+        "a crashed run was shown as 'clean' in the results table"
+    )
+    assert "no_action" not in results_section, (
+        "a crashed run was shown with a real action in the results table"
+    )
+    assert "run failed" in results_section or "error" in results_section
+
+
 def test_report_explains_every_row() -> None:
     outcomes = _fake_outcomes()
     markdown = render_markdown(outcomes)
