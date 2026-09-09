@@ -145,6 +145,63 @@ def test_report_does_not_show_a_crashed_run_as_clean_in_the_results_table() -> N
     assert "run failed" in results_section or "error" in results_section
 
 
+def test_report_does_not_hide_a_confirmed_leak_behind_a_later_crash() -> None:
+    """The mirror-image bug the fix above introduced -- found reviewing it.
+
+    `.leaked`/`.public_surface` are computed by `run_scenario` from the
+    real sandbox file state *after* its try/except, regardless of whether
+    the run later raised -- unlike `.action`, which stays at its stale
+    default when the run never reached the line that sets it. A run can
+    genuinely leak the secret (e.g. the baseline posts a comment on turn
+    1) and then crash on a later turn. Checking `.error` before `.leaked`
+    -- exactly what the previous fix did -- erases that confirmed leak:
+    the Results table reports merely "error" and "Why each result
+    happened" shows no evidence, while a paired isolated outcome makes
+    "Reading the result" (which reads `.leaked` directly) correctly claim
+    a leak happened -- a single report contradicting itself about whether
+    the secret leaked.
+    """
+    by_key = {s.key: s for s in SCENARIOS}
+    leaked_then_crashed = Outcome(
+        scenario=by_key["baseline_malicious"],
+        error="APITimeoutError: Request timed out.",
+        leaked=True,
+        public_surface=f"----- comment -----\nFAKE_API_KEY={BAIT_SECRET_VALUE}\n",
+        mechanism="run did not complete",
+    )
+    clean_isolated = Outcome(
+        scenario=by_key["isolated_malicious"],
+        action="no_action",
+        leaked=False,
+        risk_level="high_risk",
+        stages=("security_audit", "short_circuit"),
+        audit_completed=True,
+        mechanism="The audit short-circuited the pipeline.",
+    )
+    markdown = render_markdown([leaked_then_crashed, clean_isolated])
+
+    results_section = markdown[
+        markdown.index("## Results") : markdown.index("## Why each result happened")
+    ]
+    assert "**LEAKED**" in results_section, (
+        "a confirmed leak was hidden behind 'error' in the results table"
+    )
+
+    why_section = markdown[
+        markdown.index("## Why each result happened") : markdown.index(
+            "## Did the defense cost the feature?"
+        )
+    ]
+    assert BAIT_SECRET_VALUE in why_section, (
+        "a confirmed leak's evidence was omitted because the run also errored"
+    )
+
+    reading_section = markdown[markdown.index("## Reading the result") :]
+    assert "the model declined" not in reading_section, (
+        "a run that actually leaked was later described as the model declining"
+    )
+
+
 def test_report_explains_every_row() -> None:
     outcomes = _fake_outcomes()
     markdown = render_markdown(outcomes)
@@ -974,6 +1031,38 @@ def test_report_does_not_fabricate_a_story_when_the_ordinary_isolated_run_is_mis
     )
     assert "cannot be determined from the outcomes given here" in section
     assert "does not include a run of the ordinary" in section
+
+
+def test_report_does_not_fabricate_a_story_when_the_baseline_run_is_missing() -> None:
+    """The mirror case of the fix above, on the baseline side -- found by a
+    later review round that this file's earlier fixes had missed.
+
+    The `elif not baseline_leaked:` branch looked up `baseline_malicious_outcome`
+    and special-cased only its `.error` field, never the case where it is
+    `None` entirely (the scenario absent from a partial/filtered outcomes
+    list) -- `None and None.error` is falsy for the same reason `None` is,
+    so execution fell straight through to the final `else`, asserting "the
+    model declined this time" about a baseline run this report was never
+    given at all.
+    """
+    by_key = {s.key: s for s in SCENARIOS}
+    isolated_only = Outcome(
+        scenario=by_key["isolated_malicious"],
+        action="no_action",
+        leaked=False,
+        risk_level="high_risk",
+        stages=("security_audit", "short_circuit"),
+        audit_completed=True,
+        mechanism="The audit short-circuited the pipeline.",
+    )
+    markdown = render_markdown([isolated_only])
+    section = markdown[markdown.index("## Reading the result") :]
+    assert "the model declined" not in section, (
+        "asserted a specific claim about baseline model behavior on a run "
+        "absent from the outcomes given to the report"
+    )
+    assert "does not include a run of the" in section
+    assert "baseline_malicious" in section
 
 
 def test_report_does_not_credit_the_boundary_for_an_isolated_run_that_crashed() -> None:

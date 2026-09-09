@@ -23,6 +23,7 @@ sandbox/.env
 sandbox/public_comments.txt
 sandbox/labels.txt
 sandbox/report.md
+sandbox/report.*.md
 sandbox/batch_report.md
 sandbox/false_positive_rate*.md
 

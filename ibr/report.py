@@ -157,21 +157,38 @@ def render_markdown(
     parts.append("| Scenario | Action taken | Secret in public output | Audit verdict |")
     parts.append("|---|---|---|---|")
     for outcome in outcomes:
+        if outcome.leaked:
+            # Checked before `.error`, not after: `ibr/comparison.py`'s
+            # `run_scenario` computes `.leaked`/`.public_surface` from the
+            # real sandbox file state *after* its try/except, unconditionally
+            # — unlike `.action`, which stays at its stale "no_action"
+            # default when the run raised before ever reaching the line that
+            # sets it for real. A run can genuinely leak the secret (e.g. the
+            # baseline posts a comment on turn 1) and then crash on a later
+            # turn; checking `.error` first here used to erase that confirmed
+            # leak and report the row as merely "error" — contradicting
+            # "Reading the result" below and `render_terminal`'s leak
+            # counters, both of which read `.leaked` directly and correctly
+            # said a leak happened. `.action` is genuinely unknown in this
+            # combined case (never reached before the run raised), so it is
+            # not shown as if it were.
+            action_cell = f"`{outcome.action}`" if not outcome.error else "*(run then failed)*"
+            parts.append(
+                f"| {outcome.scenario.title} | {action_cell} | **LEAKED** | "
+                f"{outcome.risk_level or '—'} |"
+            )
+            continue
         if outcome.error:
-            # `action` defaults to "no_action" and `leaked` defaults to
-            # False — a run that raised before completing reads exactly
-            # like one that was checked and found clean, in the very first
-            # table a reader sees. `_leak_evidence`/"Why each result
-            # happened" below already check `.error` first (see there for
-            # why); this table used to be the one place in the report that
-            # didn't, and it is the most-read part of it.
+            # `action` defaults to "no_action" — a run that raised before
+            # completing (and did not leak) reads exactly like one that was
+            # checked and found clean, in the very first table a reader
+            # sees, unless `.error` is checked here too.
             parts.append(
                 f"| {outcome.scenario.title} | *(run failed)* | error | — |"
             )
             continue
-        marker = "**LEAKED**" if outcome.leaked else "clean"
         parts.append(
-            f"| {outcome.scenario.title} | `{outcome.action}` | {marker} | "
+            f"| {outcome.scenario.title} | `{outcome.action}` | clean | "
             f"{outcome.risk_level or '—'} |"
         )
     parts.append("")
@@ -182,6 +199,19 @@ def render_markdown(
         parts.append(f"{outcome.scenario.description}\n")
         if outcome.error:
             parts.append(f"> Run failed: `{outcome.error}`\n")
+            if outcome.leaked:
+                # `.leaked`/`.public_surface` are captured from the real
+                # sandbox state regardless of whether the run later raised
+                # (see the '## Results' table above for why) — a leak that
+                # happened before a crash is still a leak, and this is
+                # specifically the section whose job is to show the actual
+                # bytes rather than assert a leak on faith
+                # (`_leak_evidence`'s own docstring). `.published` is not
+                # shown here even though a leak happened: unlike
+                # `.public_surface`, it is only ever set on the line right
+                # after the one that raised, so it is genuinely unknown in
+                # this case, not merely unlucky to read.
+                parts.extend(_leak_evidence(outcome))
             continue
         if outcome.stages:
             parts.append(f"Stages: {' → '.join(f'`{s}`' for s in outcome.stages)}\n")
@@ -416,7 +446,22 @@ def render_markdown(
         baseline_malicious_outcome = next(
             (o for o in outcomes if o.scenario.key == "baseline_malicious"), None
         )
-        if baseline_malicious_outcome and baseline_malicious_outcome.error:
+        if baseline_malicious_outcome is None:
+            # Mirrors the `ordinary_malicious is None` guard above, for the
+            # baseline side: if this scenario is absent from a
+            # partial/filtered outcomes list, `baseline_leaked` is
+            # vacuously False with no baseline run to have an opinion
+            # about. The `if ... and ....error` check below is falsy on
+            # `None` for the same reason and used to fall straight through
+            # to the final `else`, asserting "the model declined this
+            # time" about a run that was never given to this report.
+            parts.append(
+                "This report does not include a run of the "
+                "`baseline_malicious` scenario, so whether the baseline "
+                "would have leaked on this input cannot be determined "
+                "from the outcomes given here.\n"
+            )
+        elif baseline_malicious_outcome.error:
             parts.append(
                 "**The baseline run failed before completing** "
                 f"(`{baseline_malicious_outcome.error}`), so whether it "
