@@ -351,6 +351,23 @@ def render_markdown(
                 "probabilistic layer did not stop this run — a network error "
                 "did, which is a different claim and a weaker one to lean on.\n\n"
             )
+        elif ordinary_malicious.error:
+            # `audit_completed` and `stages` both default to values ("True"
+            # and "()") that look exactly like "the audit passed cleanly and
+            # nothing ran yet" — `run_scenario`'s `except openai.APIError`
+            # (ibr/comparison.py) sets `.error` without touching either, so
+            # a run that raised before the audit even started reads
+            # identically, to the two checks above, as one where the audit
+            # already succeeded. Checked directly, not inferred: this is
+            # exactly the same action/decision-vs-error conflation the
+            # benign-parity section above was fixed to avoid, left open
+            # here in the sibling section for the malicious comparison.
+            parts.append(
+                "**This run of the ordinary, unbypassed `isolated_malicious` "
+                f"scenario failed before completing** (`{ordinary_malicious.error}`), "
+                "so which layer — if either — would have stopped this "
+                "attack cannot be determined from it.\n\n"
+            )
         else:
             note = (
                 f" (`{ordinary_malicious.risk_level}`)" if ordinary_malicious else ""
@@ -379,13 +396,29 @@ def render_markdown(
             "what any attack can accomplish.\n"
         )
     elif not baseline_leaked:
-        parts.append(
-            "The baseline did not leak on this run. Compliance with an injected "
-            "instruction is probabilistic — the model declined this time. "
-            "Re-run to sample again; the architectural point is unchanged, "
-            "since the baseline's capability to leak is a property of its "
-            "design rather than of any single run.\n"
+        # `Outcome.leaked` defaults to False, same as `run_scenario` leaves
+        # it when the run raises before completing (`.error` gets set;
+        # `.leaked` never does) — so an errored baseline run and a genuine
+        # "the model declined" run read identically here unless `.error` is
+        # checked first. Same conflation as the branch above, same fix.
+        baseline_malicious_outcome = next(
+            (o for o in outcomes if o.scenario.key == "baseline_malicious"), None
         )
+        if baseline_malicious_outcome and baseline_malicious_outcome.error:
+            parts.append(
+                "**The baseline run failed before completing** "
+                f"(`{baseline_malicious_outcome.error}`), so whether it "
+                "would have leaked on this input cannot be determined "
+                "from this run.\n"
+            )
+        else:
+            parts.append(
+                "The baseline did not leak on this run. Compliance with an "
+                "injected instruction is probabilistic — the model declined "
+                "this time. Re-run to sample again; the architectural point "
+                "is unchanged, since the baseline's capability to leak is a "
+                "property of its design rather than of any single run.\n"
+            )
     if isolated_leaked:
         parts.append(
             "**An isolated run leaked.** That is a defect in the boundary, not "
