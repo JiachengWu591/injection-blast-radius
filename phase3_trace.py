@@ -20,7 +20,9 @@ import openai
 
 from ibr.baseline_agent import run_baseline
 from ibr.bootstrap import ensure_sandbox, reset_labels, reset_public_comments
+from ibr.config import MissingApiKey
 from ibr.issues import load_issue
+from ibr.llm import StructuredOutputFailure
 from ibr.observability import clear_log, group_runs, load_records
 from ibr.pipeline import run_isolated
 
@@ -133,6 +135,12 @@ def main() -> int:
     if args.run:
         try:
             run_scenarios(args.run)
+        except MissingApiKey as exc:
+            print(f"\nFAILED: {exc}", file=sys.stderr)
+            return 1
+        except StructuredOutputFailure as exc:
+            print(f"\nFAILED: the model's response could not be used — {exc}", file=sys.stderr)
+            return 1
         except openai.AuthenticationError:
             print("\nFAILED: the API key was rejected. Check DEEPSEEK_API_KEY in .env.", file=sys.stderr)
             return 1

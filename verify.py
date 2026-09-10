@@ -50,6 +50,9 @@ OFFLINE_SUITES = (
     ("tests/test_false_positive.py", ()),
     ("tests/test_deidentify.py", ()),
     ("tests/test_fetch_real.py", ()),
+    ("tests/test_entrypoints.py", ()),
+    ("tests/test_check_mermaid.py", ()),
+    ("tests/test_make_comparison_svg.py", ()),
 )
 
 LIVE_SUITES = (

@@ -177,8 +177,22 @@ def check(paths: list[Path]) -> int:
 
 
 def main() -> int:
-    paths = [Path(a) for a in sys.argv[1:]] or sorted(ROOT.glob("*.md"))
-    return check([p for p in paths if p.is_file()])
+    if not sys.argv[1:]:
+        return check(sorted(ROOT.glob("*.md")))
+
+    # Explicit paths are the maintainer checking one file by hand -- the
+    # module docstring's own example (`node tools/check_mermaid.mjs
+    # ARCHITECTURE.md ...`) is exactly this usage. Silently dropping one that
+    # does not resolve to a file used to report "0 files checked, no problems"
+    # with exit 0: a fail-open result for a typo'd or moved filename, in a
+    # lint whose whole job is refusing rather than passing on anything it did
+    # not actually check.
+    paths = [Path(a) for a in sys.argv[1:]]
+    missing = [str(p) for p in paths if not p.is_file()]
+    if missing:
+        print(f"error: no such file: {', '.join(missing)}", file=sys.stderr)
+        return 1
+    return check(paths)
 
 
 if __name__ == "__main__":

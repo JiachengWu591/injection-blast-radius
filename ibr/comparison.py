@@ -28,6 +28,7 @@ from .config import LABELS_PATH, PUBLIC_COMMENTS_PATH
 from .fixtures import BAIT_ENV_CONTENT, BAIT_SECRET_VALUE
 from .executor import execute
 from .issues import load_issue
+from .llm import StructuredOutputFailure
 from .observability import clear_log
 from .pipeline import run_isolated
 from .schemas import ReaderOutput
@@ -272,7 +273,14 @@ def run_scenario(
                     f"audit bypass simulated; real verdict was {outcome.risk_level!r}"
                 )
 
-    except openai.APIError as exc:
+    except (openai.APIError, StructuredOutputFailure) as exc:
+        # StructuredOutputFailure joins openai.APIError here for the same
+        # reason both already end a run the same way: run_baseline's own
+        # empty-`choices` guard raises it, not an openai.* exception, and
+        # without this it would escape run_scenario uncaught -- crashing the
+        # whole batch (run_all_scenarios) over one scenario's provider quirk,
+        # instead of recording it as this one scenario's Outcome.error like
+        # every other infrastructure failure here.
         outcome.error = f"{type(exc).__name__}: {exc}"
         outcome.mechanism = "The run did not complete; nothing was published."
 

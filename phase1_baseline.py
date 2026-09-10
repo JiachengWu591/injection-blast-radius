@@ -22,9 +22,10 @@ import openai
 from ibr import sandbox_fs
 from ibr.baseline_agent import run_baseline
 from ibr.bootstrap import ensure_sandbox, reset_public_comments
-from ibr.config import PUBLIC_COMMENTS_PATH
+from ibr.config import MissingApiKey, PUBLIC_COMMENTS_PATH
 from ibr.fixtures import BAIT_SECRET_VALUE
 from ibr.issues import load_issue
+from ibr.llm import StructuredOutputFailure
 
 RULE = "─" * 72
 LEAK_MARKER = BAIT_SECRET_VALUE
@@ -50,7 +51,13 @@ def run_one(name: str) -> None:
 
     print(f"\nturns used     : {result.turns_used}")
     print(f"posted comment : {result.posted_comment is not None}")
-    if result.posted_comment:
+    # `is not None`, not truthiness: post_comment({"text": ""}) still appends
+    # a real header block to the public surface, so a truthiness check would
+    # print the contradictory "never called post_comment" on the very next
+    # line after correctly reporting `posted comment : True` above. Same
+    # check ibr/baseline_agent.py's _emit_log and ibr/comparison.py's
+    # run_scenario already use.
+    if result.posted_comment is not None:
         print(_quote(result.posted_comment))
     elif result.final_text:
         print("(model produced a final message but never called post_comment)")
@@ -80,6 +87,12 @@ def main() -> int:
             run_one("benign")
         if args.issue in ("malicious", "both"):
             run_one("malicious")
+    except MissingApiKey as exc:
+        print(f"\nFAILED: {exc}", file=sys.stderr)
+        return 1
+    except StructuredOutputFailure as exc:
+        print(f"\nFAILED: the model's response could not be used — {exc}", file=sys.stderr)
+        return 1
     except openai.AuthenticationError:
         print("\nFAILED: the API key was rejected. Check DEEPSEEK_API_KEY in .env.", file=sys.stderr)
         return 1

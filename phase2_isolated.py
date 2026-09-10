@@ -20,7 +20,7 @@ import openai
 
 from ibr import sandbox_fs
 from ibr.bootstrap import ensure_sandbox, reset_labels, reset_public_comments
-from ibr.config import LABELS_PATH, PUBLIC_COMMENTS_PATH
+from ibr.config import LABELS_PATH, MissingApiKey, PUBLIC_COMMENTS_PATH
 from ibr.fixtures import BAIT_ENV_CONTENT, BAIT_SECRET_VALUE
 from ibr.executor import execute
 from ibr.issues import load_issue
@@ -147,6 +147,9 @@ def main() -> int:
             )
         if 4 in scenes:
             run_worst_case()
+    except MissingApiKey as exc:
+        print(f"\nFAILED: {exc}", file=sys.stderr)
+        return 1
     except openai.AuthenticationError:
         print("\nFAILED: the API key was rejected. Check DEEPSEEK_API_KEY in .env.", file=sys.stderr)
         return 1

@@ -414,6 +414,44 @@ def test_ping_survives_a_response_without_usage() -> None:
 
 
 # =========================================================================
+# ibr/baseline_agent.py — the same empty-choices guard, in the tool loop.
+# =========================================================================
+
+
+def test_run_baseline_fails_closed_on_empty_choices() -> None:
+    """`run_baseline`'s tool loop indexed `response.choices[0]` unguarded.
+
+    Same documented provider quirk as ping()/call_structured_tool() above: a
+    content/safety filter can trip on HTTP 200 with an empty `choices` list.
+    Reachable on the very first turn, since the malicious issue this agent
+    processes is exactly the kind of input likely to trip one -- before this
+    fix, that turned into a bare IndexError instead of the StructuredOutputFailure
+    every other malformed-response case in this project raises.
+    """
+    reset_public_comments()
+    reset_labels()
+    client = replay.from_interactions(
+        [
+            _synthetic(
+                "an empty choices list, which real OpenAI-compatible APIs "
+                "return with HTTP 200 when a content or safety filter trips; "
+                "not reproducible on demand against a working API",
+                _no_choices_response(),
+            )
+        ],
+        name="baseline_empty_choices",
+    )
+    try:
+        run_baseline(load_issue("malicious"), client=cast("Any", client))
+    except StructuredOutputFailure:
+        pass
+    else:
+        raise AssertionError(
+            "run_baseline with an empty choices list did not fail closed"
+        )
+
+
+# =========================================================================
 # ibr/pipeline.py — both fail-closed branches.
 # =========================================================================
 
@@ -556,6 +594,39 @@ def test_report_does_not_credit_the_audit_for_a_call_that_failed() -> None:
     assert "rated the issue high_risk" not in outcome.mechanism
     assert not outcome.leaked
     assert outcome.action == "no_action"
+
+
+def test_report_does_not_crash_when_a_baseline_run_hits_the_choices_guard() -> None:
+    """run_scenario's except clause used to catch only openai.APIError.
+
+    run_baseline's own empty-choices guard raises StructuredOutputFailure, a
+    plain RuntimeError unrelated to openai's exception hierarchy -- and until
+    now not caught here either. One scenario hitting this used to crash the
+    entire six-scenario batch (run_all_scenarios, driven by run_all.py)
+    instead of recording it as this one scenario's own Outcome.error, the
+    same as every other infrastructure failure this function already handles.
+    """
+    from ibr.comparison import run_scenario
+
+    client = replay.from_interactions(
+        [
+            _synthetic(
+                "an empty choices list on the baseline's first turn, which "
+                "real OpenAI-compatible APIs return with HTTP 200 when a "
+                "content or safety filter trips; not reproducible on demand",
+                _no_choices_response(),
+            )
+        ],
+        name="cmp_baseline_empty_choices",
+    )
+    outcome = run_scenario(
+        _isolated_scenario("baseline_malicious"), client=cast("Any", client)
+    )
+
+    assert outcome.error is not None, "the exception escaped run_scenario uncaught"
+    assert "StructuredOutputFailure" in outcome.error
+    assert outcome.action == "no_action"
+    assert not outcome.leaked
 
 
 def test_report_explains_a_run_that_failed_closed_before_the_executor() -> None:

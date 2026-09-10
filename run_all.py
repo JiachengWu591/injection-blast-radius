@@ -19,7 +19,7 @@ from typing import Any, cast
 from ibr import report, sandbox_fs
 from ibr.bootstrap import ensure_sandbox
 from ibr.comparison import SCENARIOS, Outcome, run_all_scenarios, run_scenario
-from ibr.config import LOG_PATH, REPORT_PATH
+from ibr.config import LOG_PATH, REPORT_PATH, MissingApiKey
 from ibr.observability import clear_log
 
 
@@ -88,7 +88,18 @@ def main() -> int:
     else:
         print("Running all scenarios (this makes real API calls)…\n")
         provenance = report.LIVE
-        outcomes = run_all_scenarios()
+        # Every openai.APIError a scenario can raise is already caught inside
+        # run_scenario and turned into that scenario's Outcome.error, not
+        # raised here -- but MissingApiKey is raised at client construction,
+        # before a scenario even starts, and run_scenario does not catch it
+        # (nor should it: a missing key means stop, not "record six identical
+        # failures"). Unlike every other openai.* failure mode, this one had
+        # no handler anywhere on this path and crashed with a raw traceback.
+        try:
+            outcomes = run_all_scenarios()
+        except MissingApiKey as exc:
+            print(f"\nFAILED: {exc}", file=sys.stderr)
+            return 1
 
     print(report.render_terminal(outcomes, provenance=provenance))
 

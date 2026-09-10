@@ -199,6 +199,32 @@ jobs:
         # quietly remove whatever makes each repository different.
         run: coverage run --append --source=ibr tests/test_fetch_real.py
 
+      - name: Entry-point scripts — the error handling phase0-3 and run_all.py share
+        # A self-review round found the same gap five times: MissingApiKey
+        # (raised at client construction, before any openai.* exception is
+        # possible) and, on the two scripts calling run_baseline directly,
+        # StructuredOutputFailure, were not in any of these scripts' except
+        # clauses -- so either one crashed with a raw traceback instead of
+        # the curated "FAILED: ..." message every other failure mode gets.
+        run: coverage run --append --source=ibr tests/test_entrypoints.py
+
+      - name: check_mermaid.py's own command-line path handling
+        # An explicit but mistyped or moved filename used to be silently
+        # dropped and reported as "no problems found" with exit 0 -- a
+        # fail-open result in a lint whose whole job is refusing rather than
+        # passing on anything it did not actually check.
+        run: coverage run --append --source=ibr tests/test_check_mermaid.py
+
+      - name: make_comparison_svg.py — four fixes from a self-review round
+        # An AuthenticationError's message can echo back a fragment of the
+        # real key, and the generic exception handler used to print it
+        # verbatim; the leaked-lines highlight and the leak verdict banner
+        # could disagree because they matched on two different strings; the
+        # figure's own caption claims "nothing here is illustrative" but
+        # every read_file call was rendered against a hardcoded path; and
+        # --check claimed to detect staleness it structurally cannot.
+        run: coverage run --append --source=ibr tests/test_make_comparison_svg.py
+
       - name: Require full coverage of the security-critical modules
         # These are the structural boundary: the schema parsers, the executor
         # whitelist, the sandbox guard, the sink the executor publishes through,

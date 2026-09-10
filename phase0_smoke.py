@@ -33,7 +33,7 @@ from ibr.config import (
     SANDBOX_ROOT,
 )
 from ibr.issues import available_issues, load_issue
-from ibr.llm import ping
+from ibr.llm import StructuredOutputFailure, ping
 from ibr.sandbox_fs import SandboxViolation
 
 RULE = "─" * 72
@@ -123,6 +123,9 @@ def main() -> int:
         step_live_call()
     except MissingApiKey as exc:
         print(f"\nFAILED: {exc}", file=sys.stderr)
+        return 1
+    except StructuredOutputFailure as exc:
+        print(f"\nFAILED: the model's response could not be used — {exc}", file=sys.stderr)
         return 1
     except openai.NotFoundError as exc:
         print(

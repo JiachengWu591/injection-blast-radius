@@ -29,7 +29,7 @@ from .config import (
     PUBLIC_COMMENTS_PATH,
 )
 from .issues import Issue
-from .llm import build_client
+from .llm import StructuredOutputFailure, build_client
 from .observability import LogRecord, append_records, new_run_id, summarize, utc_now
 from .sandbox_fs import SandboxViolation
 
@@ -244,6 +244,17 @@ def run_baseline(
             messages=messages,  # type: ignore[arg-type]
             tools=TOOLS,  # type: ignore[arg-type]
         )
+        # `choices` can come back empty — documented provider behaviour for a
+        # request/completion that trips a content or safety filter, returned
+        # with HTTP 200 rather than an error status. This is exactly the class
+        # of input this agent is built to process (an adversarial issue body),
+        # and ibr/llm.py's ping() and call_structured_tool() are already
+        # guarded against it; this loop indexed through it unguarded.
+        if not response.choices:
+            raise StructuredOutputFailure(
+                "run_baseline: response contained no choices (provider "
+                "content/safety filter?)"
+            )
         message = response.choices[0].message
         messages.append(message.model_dump(exclude_none=True))
 

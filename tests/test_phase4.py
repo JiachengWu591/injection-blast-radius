@@ -644,7 +644,10 @@ def test_figure_panes_report_outcomes_honestly() -> None:
 
     def observation(*, baseline_leaked: bool, isolated_leaked: bool) -> Observation:
         return Observation(
-            baseline_tools=("read_file", "post_comment"),
+            baseline_tools=(
+                ("read_file", '{"path": "sandbox/.env"}'),
+                ("post_comment", '{"text": "triaged"}'),
+            ),
             baseline_leaked=baseline_leaked,
             baseline_leaked_lines=(
                 (f"FAKE_API_KEY={BAIT_SECRET_VALUE}",) if baseline_leaked else ()
