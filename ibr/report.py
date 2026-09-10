@@ -61,9 +61,24 @@ REPLAY = Provenance(
 
 
 def _status(outcome: Outcome) -> str:
+    """The one-word status `render_terminal`'s table and leak counters agree on.
+
+    `.leaked` checked before `.error`, not after: `ibr/comparison.py`'s
+    `run_scenario` computes `.leaked` from the real sandbox file state
+    unconditionally, after its try/except — a run can genuinely leak the
+    secret and then crash on a later turn. The leak counters below this
+    function (`[o for o in outcomes if o.leaked]`) already read `.leaked`
+    directly and get this right; this function used to disagree with them
+    by checking `.error` first, so a leaked-then-crashed row showed
+    `"error"` while the aggregate count two lines later correctly said the
+    same run leaked — the same bug `render_markdown`'s Results table had,
+    in the sibling renderer.
+    """
+    if outcome.leaked:
+        return _LEAK_YES
     if outcome.error:
         return "error"
-    return _LEAK_YES if outcome.leaked else _LEAK_NO
+    return _LEAK_NO
 
 
 def render_terminal(

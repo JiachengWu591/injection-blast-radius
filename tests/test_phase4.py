@@ -1149,6 +1149,183 @@ def test_terminal_table_lists_every_scenario() -> None:
     assert "isolated runs that leaked" in table
 
 
+def test_terminal_status_column_does_not_hide_a_confirmed_leak_behind_error() -> None:
+    """The same bug as render_markdown's Results table, found while
+    designing a structural test for it -- living in the sibling renderer.
+
+    `_status()` checked `.error` before `.leaked`, so a run that leaked
+    and then crashed showed `"error"` in its own row while the leak
+    counter two lines below (which reads `.leaked` directly) correctly
+    counted it -- one table, two places, disagreeing about whether that
+    exact run leaked.
+    """
+    by_key = {s.key: s for s in SCENARIOS}
+    leaked_then_crashed = Outcome(
+        scenario=by_key["baseline_malicious"],
+        error="APITimeoutError: Request timed out.",
+        leaked=True,
+        public_surface=f"----- comment -----\nFAKE_API_KEY={BAIT_SECRET_VALUE}\n",
+    )
+    table = render_terminal([leaked_then_crashed])
+    row = next(line for line in table.splitlines() if "Baseline" in line)
+    assert "error" not in row, (
+        f"a confirmed leak's own row said 'error' instead of a leak marker: {row!r}"
+    )
+    assert "baseline runs that leaked the secret : 1" in table, (
+        "the leak counter and the per-row status disagreed about the same run"
+    )
+
+
+def test_leak_and_crash_signals_are_independent_in_every_per_outcome_render() -> None:
+    """An invariant sweep, not another one-combination-at-a-time regression test.
+
+    Five rounds of fixes to this file each found ONE more place reading
+    `.error` and `.leaked` as if they were mutually exclusive, when
+    `ibr/comparison.py`'s `run_scenario` makes them genuinely independent
+    (`.leaked`/`.public_surface` are computed from the real sandbox state
+    unconditionally, *after* the try/except that sets `.error` — a run can
+    leak the secret on one turn and then crash on a later one). Each fix
+    checked only the specific combination a previous bug happened to be
+    reproduced with. This sweeps all four `(error, leaked)` combinations,
+    for a representative malicious scenario on each architecture side,
+    through both per-outcome renderers — so a future change that reads
+    either field with no awareness of the other fails here on whichever
+    combination it missed, instead of waiting for the next self-review
+    round to reproduce that one case by hand.
+
+    This does not replace the dedicated regression tests above and below
+    it, which each pin the exact wording a specific historical bug
+    produced — it catches the *next* instance of the same pattern, in
+    code this sweep's four lenses did not anticipate needing to name.
+    """
+    by_key = {s.key: s for s in SCENARIOS}
+    leaked_surface = f"----- comment -----\nFAKE_API_KEY={BAIT_SECRET_VALUE}\n"
+    combinations = (
+        (None, False),
+        (None, True),
+        ("APITimeoutError: Request timed out.", False),
+        ("APITimeoutError: Request timed out.", True),
+    )
+
+    for scenario_key in ("baseline_malicious", "isolated_malicious"):
+        for error, leaked in combinations:
+            outcome = Outcome(
+                scenario=by_key[scenario_key],
+                error=error,
+                leaked=leaked,
+                public_surface=leaked_surface if leaked else "",
+                mechanism="probe",
+            )
+            label = f"{scenario_key} error={error!r} leaked={leaked}"
+            markdown = render_markdown([outcome])
+            terminal = render_terminal([outcome])
+            terminal_row = next(
+                line for line in terminal.splitlines() if outcome.scenario.title in line
+            )
+
+            if leaked:
+                # A confirmed leak must be visible everywhere, regardless
+                # of whether the run later crashed.
+                assert "LEAKED" in markdown, f"{label}: markdown never showed LEAKED"
+                assert BAIT_SECRET_VALUE in markdown, (
+                    f"{label}: markdown never showed the leaked bytes"
+                )
+                assert "error" not in terminal_row, (
+                    f"{label}: the terminal row hid a confirmed leak behind 'error': "
+                    f"{terminal_row!r}"
+                )
+            elif error is not None:
+                # No leak, but a real crash: must read as failed, never as
+                # a checked-and-clean decision.
+                results_section = markdown[
+                    markdown.index("## Results") : markdown.index(
+                        "## Why each result happened"
+                    )
+                ]
+                assert "clean" not in results_section, (
+                    f"{label}: markdown showed a crashed run as 'clean'"
+                )
+                assert "LEAKED" not in markdown, (
+                    f"{label}: markdown showed LEAKED for a run that did not leak"
+                )
+                assert error in markdown, f"{label}: the real error message is missing"
+                assert "error" in terminal_row, (
+                    f"{label}: the terminal row did not flag the crash: {terminal_row!r}"
+                )
+            else:
+                # The ordinary case: no crash, no leak.
+                assert "LEAKED" not in markdown, f"{label}: false leak in markdown"
+                assert "error" not in terminal_row, f"{label}: false error in terminal"
+
+
+def test_every_per_outcome_loop_in_report_is_aware_of_error_or_leaked() -> None:
+    """Structural guard against this file's recurring bug class, by AST.
+
+    Five rounds of fixes each found a `for outcome in outcomes:` loop in
+    `ibr/report.py` that read `.action`, `.audit_completed`, or `.stages`
+    -- fields that default to values indistinguishable from a real,
+    checked result -- with no reference to `.error` or `.leaked` anywhere
+    in the loop body. This does not prove a loop's check is *correctly
+    ordered* (the combinatorial sweep above does that, behaviourally); it
+    proves every per-outcome loop in this file at least references one of
+    the two fields whose interaction this bug class always turns out to
+    be about, the same way `test_executor_source_never_reads_the_free_text_fields`
+    proves a structural property by walking the AST instead of by
+    enumerating scenarios. A future loop added with zero awareness of
+    either field fails here immediately, by construction.
+
+    `_status()` is treated as an accepted proxy for a direct `.error`/
+    `.leaked` reference: `render_terminal`'s loop calls it rather than
+    checking either field inline, and `_status()`'s own behaviour (both
+    fields, correctly ordered) is separately pinned by
+    `test_terminal_status_column_does_not_hide_a_confirmed_leak_behind_error`.
+    """
+    import ast
+
+    source = (
+        Path(__file__).resolve().parents[1] / "ibr" / "report.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    def is_aware(node: ast.AST) -> bool:
+        for child in ast.walk(node):
+            if isinstance(child, ast.Attribute) and child.attr in ("error", "leaked"):
+                return True
+            if (
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Name)
+                and child.func.id == "_status"
+            ):
+                return True
+        return False
+
+    checked = 0
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.For)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "outcome"
+            and isinstance(node.iter, ast.Name)
+            and node.iter.id == "outcomes"
+        ):
+            continue
+        checked += 1
+        assert is_aware(node), (
+            f"ibr/report.py:{node.lineno}: a `for outcome in outcomes:` loop "
+            "never references `.error`, `.leaked`, or `_status()` anywhere "
+            "in its body -- every such loop in this file has had to learn "
+            "that a crashed or leaked-then-crashed run needs special "
+            "handling; a new one with no awareness of either field is "
+            "exactly the bug class this file keeps re-learning"
+        )
+
+    assert checked >= 3, (
+        f"expected at least the Results table, 'Why each result happened', "
+        f"and render_terminal loops, found {checked} -- this test may be "
+        "watching code that moved"
+    )
+
+
 # =========================================================================
 # Live tests — the real comparison, end to end.
 # =========================================================================
