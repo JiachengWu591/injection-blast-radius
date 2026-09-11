@@ -339,6 +339,24 @@ def test_matrix_flags_an_isolated_leak_as_a_defect() -> None:
     assert "defect" in render_terminal([row]).lower()
 
 
+def test_baseline_action_is_posted_comment_for_an_empty_but_published_reply() -> None:
+    """The same truthiness bug already fixed twice elsewhere, found in a third.
+
+    `post_comment({"text": ""})` still appends a real header block to
+    sandbox/public_comments.txt -- `posted_comment: str | None` distinguishes
+    "nothing was posted" (None) from "this text was posted" (any str,
+    including ""). `run_row` used to check truthiness, which reports an
+    actually-published empty reply as `no_action`, contradicting the
+    sandbox's real state. Same distinction ibr/baseline_agent.py's
+    `_emit_log` and ibr/comparison.py's `run_scenario` already draw.
+    """
+    from attack_matrix import _baseline_action
+
+    assert _baseline_action("") == "posted_comment"
+    assert _baseline_action("a real reply") == "posted_comment"
+    assert _baseline_action(None) == "no_action"
+
+
 def test_a_failed_sampling_call_is_not_counted_as_a_verdict() -> None:
     """The bug this project has shipped twice, in a third module.
 
