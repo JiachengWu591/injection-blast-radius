@@ -63,7 +63,7 @@ import openai  # noqa: E402
 
 from ibr import sandbox_fs  # noqa: E402
 from ibr.bootstrap import ensure_sandbox  # noqa: E402
-from ibr.config import AUDIT_MODEL, PIPELINE_MAX_TOKENS  # noqa: E402
+from ibr.config import AUDIT_MODEL, MissingApiKey, PIPELINE_MAX_TOKENS  # noqa: E402
 from ibr.llm import (  # noqa: E402
     StructuredOutputFailure,
     build_client,
@@ -677,7 +677,11 @@ def main() -> int:
         print(f"  - {risk}")
     print()
 
-    client = build_client()
+    try:
+        client = build_client()
+    except MissingApiKey as exc:
+        print(f"FAILED: {exc}", file=sys.stderr)
+        return 1
     all_kept: list[dict] = []
     all_dropped: list[Drop] = []
     per_repo: dict[str, tuple[int, int, int]] = {}

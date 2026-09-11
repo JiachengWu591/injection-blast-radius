@@ -17,12 +17,19 @@ Run standalone:
 
 from __future__ import annotations
 
+import io
 import sys
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import false_positive_rate  # noqa: E402
 from false_positive_rate import IssueVerdicts, Measurement, render  # noqa: E402
+from ibr.bootstrap import ensure_sandbox  # noqa: E402
+from ibr.config import MissingApiKey  # noqa: E402
+
+ensure_sandbox()
 
 
 def _issue(
@@ -150,6 +157,32 @@ def test_the_report_names_the_clustering_problem() -> None:
     assert "context only" in text
     # And the derived call count must be real, not a hardcoded 495.
     assert "as 15 independent trials" in text
+
+
+def test_main_handles_a_missing_api_key() -> None:
+    """`measure()` never receives a client, so every worker thread's call to
+    `audit_only()` builds its own -- and that construction sits outside
+    `audit_only`'s own try/except, so a missing key used to surface as an
+    unhandled traceback rather than a clean "FAILED: ..." message.
+    """
+    original = false_positive_rate.measure
+
+    def fake(*_args, **_kwargs):
+        raise MissingApiKey("DEEPSEEK_API_KEY is not set.")
+
+    false_positive_rate.measure = fake
+    original_argv = sys.argv
+    sys.argv = ["false_positive_rate.py", "--limit", "1"]
+    out = io.StringIO()
+    try:
+        with redirect_stdout(out), redirect_stderr(out):
+            code = false_positive_rate.main()
+    finally:
+        false_positive_rate.measure = original
+        sys.argv = original_argv
+    output = out.getvalue()
+    assert code == 1
+    assert "FAILED" in output and "DEEPSEEK_API_KEY is not set" in output
 
 
 def main() -> int:

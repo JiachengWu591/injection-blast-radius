@@ -234,7 +234,13 @@ def render_markdown(
         for note in outcome.notes:
             parts.append(f"- {note}\n")
         parts.extend(_leak_evidence(outcome))
-        if outcome.published:
+        # `is not None`, not truthiness: `outcome.published` is `str | None`,
+        # and a baseline run that called post_comment with an empty string is
+        # a real, published (empty) comment -- `outcome.action` already reads
+        # "posted_comment" for exactly this case (ibr/comparison.py's
+        # run_scenario), so a truthiness check here would print "Nothing was
+        # published" directly under a Results-table row that says otherwise.
+        if outcome.published is not None:
             parts.append("Published to the public surface:\n")
             parts.append(_fence(textwrap.shorten(outcome.published, 600, placeholder=" …")))
             parts.append("")

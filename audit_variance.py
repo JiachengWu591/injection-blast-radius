@@ -34,7 +34,7 @@ import sys
 from ibr import sandbox_fs
 from ibr.attack_corpus import PATTERNS, pattern_by_key
 from ibr.bootstrap import ensure_sandbox
-from ibr.config import AUDIT_MODEL, LOG_DIR, SANDBOX_ROOT
+from ibr.config import AUDIT_MODEL, LOG_DIR, MissingApiKey, SANDBOX_ROOT
 from ibr.issues import load_issue
 from ibr.llm import build_client
 from ibr.variance import (
@@ -324,7 +324,11 @@ def main() -> int:
         patterns = list(PATTERNS)
 
     ensure_sandbox()
-    client = build_client(timeout=120.0)
+    try:
+        client = build_client(timeout=120.0)
+    except MissingApiKey as exc:
+        print(f"FAILED: {exc}", file=sys.stderr)
+        return 1
     result = CorpusVariance(samples_requested=args.samples)
 
     subjects: list[tuple[str, str, bool, object]] = [

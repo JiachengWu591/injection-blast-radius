@@ -50,7 +50,13 @@ from pathlib import Path
 
 from ibr import sandbox_fs
 from ibr.bootstrap import ensure_sandbox
-from ibr.config import AUDIT_MODEL, CORPUS_PATH, FP_REPORT_PATH, FP_SAMPLES_PATH
+from ibr.config import (
+    AUDIT_MODEL,
+    CORPUS_PATH,
+    FP_REPORT_PATH,
+    FP_SAMPLES_PATH,
+    MissingApiKey,
+)
 from ibr.issues import Issue
 from ibr.sources import load_labelled_corpus
 from ibr.variance import SampleStore, measure_subject, wilson_interval
@@ -389,13 +395,22 @@ def main() -> int:
         f"Measuring {len(corpus)} issues × {args.samples} samples "
         f"(up to {total_calls} calls, stored samples reused)…\n"
     )
-    result = measure(
-        corpus,
-        labels,
-        samples=args.samples,
-        store=store,
-        audit_model=args.model,
-    )
+    try:
+        result = measure(
+            corpus,
+            labels,
+            samples=args.samples,
+            store=store,
+            audit_model=args.model,
+        )
+    except MissingApiKey as exc:
+        # measure() never receives a client, so every worker thread's call to
+        # audit_only() builds its own via `client or build_client()` -- and
+        # that construction sits outside audit_only's own try/except (which
+        # only covers the actual API call), so a missing key surfaces here
+        # rather than as a per-issue failure.
+        print(f"\nFAILED: {exc}", file=sys.stderr)
+        return 1
 
     report = render(result, audit_model=args.model)
     print("\n" + report)

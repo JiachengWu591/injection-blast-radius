@@ -13,18 +13,23 @@ Run standalone:
 
 from __future__ import annotations
 
+import io
 import re
 import sys
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import attack_matrix  # noqa: E402
 from attack_matrix import MatrixRow, render_markdown, render_terminal  # noqa: E402
 from ibr.attack_corpus import PATTERNS, pattern_by_key  # noqa: E402
 from ibr.bootstrap import ensure_sandbox  # noqa: E402
+from ibr.config import MissingApiKey  # noqa: E402
 from ibr.fixtures import BAIT_SECRET_VALUE  # noqa: E402
 from ibr.executor import COMMENT_TEMPLATES, execute  # noqa: E402
+from ibr.llm import StructuredOutputFailure  # noqa: E402
 from ibr.schemas import ReaderOutput  # noqa: E402
 
 ensure_sandbox()
@@ -355,6 +360,54 @@ def test_baseline_action_is_posted_comment_for_an_empty_but_published_reply() ->
     assert _baseline_action("") == "posted_comment"
     assert _baseline_action("a real reply") == "posted_comment"
     assert _baseline_action(None) == "no_action"
+
+
+def test_run_row_records_a_structured_output_failure_as_a_row_error() -> None:
+    """`run_row`'s except clause used to catch only openai.APIError.
+
+    `run_baseline`'s own empty-choices guard raises `StructuredOutputFailure`,
+    a plain RuntimeError unrelated to openai's exception hierarchy -- until
+    now not caught here either. One pattern hitting this used to crash the
+    entire matrix run instead of recording it as this row's own error, the
+    same as every other infrastructure failure `run_row` already handles.
+    """
+    original = attack_matrix.run_baseline
+
+    def fake(*_args, **_kwargs):
+        raise StructuredOutputFailure("no choices")
+
+    attack_matrix.run_baseline = fake
+    try:
+        row = attack_matrix.run_row(PATTERNS[0], audit_samples=0)
+    finally:
+        attack_matrix.run_baseline = original
+
+    assert row.error is not None, "the exception escaped run_row uncaught"
+    assert "StructuredOutputFailure" in row.error
+
+
+def test_attack_matrix_main_handles_a_missing_api_key() -> None:
+    """Checked once, up front -- without it every pattern's row would carry
+    the identical MissingApiKey error instead of main() failing fast.
+    """
+    original = attack_matrix.assert_api_key_present
+
+    def fake():
+        raise MissingApiKey("DEEPSEEK_API_KEY is not set.")
+
+    attack_matrix.assert_api_key_present = fake
+    original_argv = sys.argv
+    sys.argv = ["attack_matrix.py", "--only", PATTERNS[0].key]
+    out = io.StringIO()
+    try:
+        with redirect_stdout(out), redirect_stderr(out):
+            code = attack_matrix.main()
+    finally:
+        attack_matrix.assert_api_key_present = original
+        sys.argv = original_argv
+    output = out.getvalue()
+    assert code == 1
+    assert "FAILED" in output and "DEEPSEEK_API_KEY is not set" in output
 
 
 def test_a_failed_sampling_call_is_not_counted_as_a_verdict() -> None:

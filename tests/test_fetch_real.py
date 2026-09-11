@@ -39,7 +39,9 @@ Run standalone:
 from __future__ import annotations
 
 import http.client
+import io
 import json
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 import sys
 import urllib.error
@@ -48,6 +50,8 @@ from typing import Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import tools.fetch_real_corpus as fetch_real_corpus  # noqa: E402
+from ibr.config import MissingApiKey  # noqa: E402
 from tools.fetch_real_corpus import (  # noqa: E402
     AUTHORISED_REPOS,
     DEFAULT_REPOS,
@@ -475,6 +479,31 @@ def test_names_third_party_is_judged_and_not_read_out_of_the_reasoning() -> None
     assert '"names_third_party": verdict["names_third_party"]' in body, (
         "the record's names_third_party is not the review's own answer"
     )
+
+
+def test_main_handles_a_missing_api_key() -> None:
+    """`client = build_client()` used to have no try/except around it at
+    all -- a missing key crashed with a raw traceback instead of a clean
+    "FAILED: ..." message.
+    """
+    original = fetch_real_corpus.build_client
+
+    def fake(*_args, **_kwargs):
+        raise MissingApiKey("DEEPSEEK_API_KEY is not set.")
+
+    fetch_real_corpus.build_client = fake
+    original_argv = sys.argv
+    sys.argv = ["fetch_real_corpus.py", "--want-per-repo", "1"]
+    out = io.StringIO()
+    try:
+        with redirect_stdout(out), redirect_stderr(out):
+            code = fetch_real_corpus.main()
+    finally:
+        fetch_real_corpus.build_client = original
+        sys.argv = original_argv
+    output = out.getvalue()
+    assert code == 1
+    assert "FAILED" in output and "DEEPSEEK_API_KEY is not set" in output
 
 
 def main() -> int:

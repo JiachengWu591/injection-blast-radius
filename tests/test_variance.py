@@ -12,22 +12,25 @@ Run standalone:
 
 from __future__ import annotations
 
+import io
 import itertools
 import json
 import os
 import shutil
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 import sys
 from pathlib import Path
 from typing import Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import audit_variance  # noqa: E402
+import model_comparison  # noqa: E402
 from audit_variance import render_markdown, render_terminal  # noqa: E402
 from ibr import sandbox_fs  # noqa: E402
 from ibr.bootstrap import ensure_sandbox  # noqa: E402
-from ibr.config import LOG_DIR  # noqa: E402
+from ibr.config import LOG_DIR, MissingApiKey  # noqa: E402
 from ibr.variance import (  # noqa: E402
     PASSES_THROUGH,
     CorpusVariance,
@@ -999,6 +1002,56 @@ def test_comparison_per_subject_table_covers_every_model() -> None:
         out = renderer(comparison)
         assert "alpha" in out and "beta" in out
         assert "Benign bug report (control)" in out
+
+
+def _run_main(module, argv: list[str]) -> tuple[int, str]:
+    original_argv = sys.argv
+    sys.argv = [f"{module.__name__}.py", *argv]
+    out = io.StringIO()
+    try:
+        with redirect_stdout(out), redirect_stderr(out):
+            code = module.main()
+    finally:
+        sys.argv = original_argv
+    return code, out.getvalue()
+
+
+def test_audit_variance_main_handles_a_missing_api_key() -> None:
+    """`client = build_client(timeout=120.0)` used to have no try/except at
+    all around it -- a missing key crashed with a raw traceback instead of a
+    clean "FAILED: ..." message.
+    """
+    original = audit_variance.build_client
+    audit_variance.build_client = lambda **_: (_ for _ in ()).throw(
+        MissingApiKey("DEEPSEEK_API_KEY is not set.")
+    )
+    try:
+        code, output = _run_main(audit_variance, ["--samples", "1", "--no-benign"])
+    finally:
+        audit_variance.build_client = original
+    assert code == 1
+    assert "FAILED" in output and "DEEPSEEK_API_KEY is not set" in output
+
+
+def test_model_comparison_main_handles_a_missing_api_key() -> None:
+    """`measure_model`'s `build_client(timeout=120.0)` was reached from a
+    `main()` loop with zero exception handling anywhere in the file.
+    """
+    original = model_comparison.measure_model
+
+    def fake(*_args, **_kwargs):
+        raise MissingApiKey("DEEPSEEK_API_KEY is not set.")
+
+    model_comparison.measure_model = fake
+    try:
+        code, output = _run_main(
+            model_comparison,
+            ["--models", "deepseek-v4-flash,deepseek-v4-pro", "--samples", "1"],
+        )
+    finally:
+        model_comparison.measure_model = original
+    assert code == 1
+    assert "FAILED" in output and "DEEPSEEK_API_KEY is not set" in output
 
 
 # =========================================================================

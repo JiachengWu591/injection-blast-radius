@@ -29,9 +29,15 @@ from ibr import sandbox_fs
 from ibr.attack_corpus import PATTERNS, AttackPattern, pattern_by_key
 from ibr.baseline_agent import run_baseline
 from ibr.bootstrap import ensure_sandbox, reset_labels, reset_public_comments
-from ibr.config import PUBLIC_COMMENTS_PATH, SANDBOX_ROOT
+from ibr.config import (
+    MissingApiKey,
+    PUBLIC_COMMENTS_PATH,
+    SANDBOX_ROOT,
+    assert_api_key_present,
+)
 from ibr.fixtures import BAIT_SECRET_VALUE
 from ibr.issues import Issue
+from ibr.llm import StructuredOutputFailure
 
 MATRIX_REPORT_PATH = SANDBOX_ROOT / "attack_matrix.md"
 RULE = "─" * 96
@@ -143,7 +149,14 @@ def run_row(pattern: AttackPattern, *, audit_samples: int = 0) -> MatrixRow:
         row.reader_reasoning_chars = (
             len(isolated.reader.reasoning) if isolated.reader else 0
         )
-    except openai.APIError as exc:
+    except (openai.APIError, StructuredOutputFailure) as exc:
+        # StructuredOutputFailure joins openai.APIError for the same reason
+        # they're already treated the same way here: run_baseline's own
+        # empty-`choices` guard raises it, not an openai.* exception, and
+        # without this it would escape run_row uncaught -- crashing the
+        # whole matrix over one pattern's provider quirk, instead of
+        # recording it as this one row's error like every other
+        # infrastructure failure here.
         row.error = f"{type(exc).__name__}: {exc}"
 
     return row
@@ -395,6 +408,14 @@ def main() -> int:
         patterns = list(PATTERNS)
 
     ensure_sandbox()
+    # Checked once, up front: without it, every pattern's row would carry the
+    # identical MissingApiKey error, which is technically fail-closed but
+    # buries the one thing wrong under N repeats of it.
+    try:
+        assert_api_key_present()
+    except MissingApiKey as exc:
+        print(f"FAILED: {exc}", file=sys.stderr)
+        return 1
     print(
         f"Running {len(patterns)} attack pattern(s) × 2 architectures "
         "(real API calls)…\n"

@@ -727,6 +727,31 @@ def test_report_renders_a_failed_run_without_inventing_a_mechanism() -> None:
     assert "error" in terminal
 
 
+def test_report_does_not_call_an_empty_publish_nothing_published() -> None:
+    """`outcome.published` is `str | None`; a baseline run's post_comment("")
+    still published a real (empty) comment, and `outcome.action` already
+    reads "posted_comment" for exactly this case (ibr/comparison.py's
+    run_scenario). A truthiness check here used to print "Nothing was
+    published" directly under a Results-table row that says otherwise.
+    """
+    by_key = {s.key: s for s in SCENARIOS}
+    empty_publish = Outcome(
+        scenario=by_key["baseline_malicious"],
+        action="posted_comment",
+        published="",
+        mechanism=(
+            "The agent composed its own reply text with no filter between "
+            "reading and publishing."
+        ),
+    )
+    markdown = render_markdown([empty_publish])
+
+    assert "Nothing was published" not in markdown, (
+        "an empty-but-published comment was reported as nothing published"
+    )
+    assert "Published to the public surface" in markdown
+
+
 def test_report_states_when_both_architectures_took_the_same_action() -> None:
     """The parity branch nobody had exercised."""
     by_key = {s.key: s for s in SCENARIOS}

@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from ibr import sandbox_fs
 from ibr.attack_corpus import PATTERNS
 from ibr.bootstrap import ensure_sandbox
-from ibr.config import SANDBOX_ROOT
+from ibr.config import MissingApiKey, SANDBOX_ROOT
 from ibr.issues import Issue, load_issue
 from ibr.llm import build_client
 from ibr.variance import (
@@ -394,21 +394,25 @@ def main() -> int:
         f"{len(models)} model(s) = {total} calls…\n"
     )
 
-    for index, model in enumerate(models, 1):
-        print(f"  [{index}/{len(models)}] {model}")
-        result = measure_model(
-            model, samples=args.samples, concurrency=args.concurrency
-        )
-        empty = [s for s in result.corpus.subjects if s.trials == 0]
-        if empty:
-            print(
-                f"\nFAILED: no successful audit calls on {model} for "
-                f"{', '.join(s.key for s in empty)}",
-                file=sys.stderr,
+    try:
+        for index, model in enumerate(models, 1):
+            print(f"  [{index}/{len(models)}] {model}")
+            result = measure_model(
+                model, samples=args.samples, concurrency=args.concurrency
             )
-            return 1
-        comparison.models.append(result)
-        print()
+            empty = [s for s in result.corpus.subjects if s.trials == 0]
+            if empty:
+                print(
+                    f"\nFAILED: no successful audit calls on {model} for "
+                    f"{', '.join(s.key for s in empty)}",
+                    file=sys.stderr,
+                )
+                return 1
+            comparison.models.append(result)
+            print()
+    except MissingApiKey as exc:
+        print(f"\nFAILED: {exc}", file=sys.stderr)
+        return 1
 
     print(render_terminal(comparison))
 
